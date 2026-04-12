@@ -1,0 +1,82 @@
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+MANIFEST
+
+# ── Virtual environments ───────────────────────────────────────
+ceng467_env/
+venv/
+.venv/
+env/
+ENV/
+.Python
+
+# ── Jupyter ───────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── ML model weights & checkpoints ───────────────────────────
+# (can be hundreds of MB — use HuggingFace Hub instead)
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+*.pkl
+*.pickle
+checkpoints/
+outputs/
+runs/
+wandb/
+
+# ── HuggingFace / dataset caches ─────────────────────────────
+**/conll2003_cache/
+.cache/
+huggingface_cache/
+hf_cache/
+
+# ── Logs & profiling ─────────────────────────────────────────
+*.log
+*.log.*
+logs/
+*.prof
+*.coverage
+.coverage
+htmlcov/
+
+# ── Environment / secrets ─────────────────────────────────────
+.env
+.env.*
+*.env
+secrets.py
+
+# ── macOS ─────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+__MACOSX/
+
+# ── Windows ───────────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── IDE ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
