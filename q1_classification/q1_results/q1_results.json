@@ -1,0 +1,92 @@
+{
+  "meta": {
+    "student_id": "310201050",
+    "seed": 3102,
+    "device": "mps",
+    "dataset": "IMDb",
+    "splits": {
+      "train": 6000,
+      "val": 1000,
+      "test": 1000
+    }
+  },
+  "tokenization_strategies": {
+    "strategy_A": "Whitespace split + lowercase + HTML removal + stopword removal  → used by TF-IDF",
+    "strategy_B": "NLTK word_tokenize + lowercase + HTML removal (no stopword removal) → used by BiLSTM",
+    "strategy_C": "WordPiece subword tokenization via DistilBertTokenizerFast → used by DistilBERT"
+  },
+  "models": {
+    "tfidf_lr": {
+      "val_accuracy": 0.877,
+      "val_macro_f1": 0.8768,
+      "test_accuracy": 0.855,
+      "test_macro_f1": 0.8548,
+      "hyperparams": {
+        "max_features": 30000,
+        "ngram_range": "(1,2)",
+        "sublinear_tf": true,
+        "C": 0.7
+      }
+    },
+    "bilstm": {
+      "test_accuracy": 0.749,
+      "test_macro_f1": 0.7488,
+      "hyperparams": {
+        "vocab_size": 20000,
+        "embed_dim": 128,
+        "hidden_dim": 128,
+        "num_layers": 2,
+        "dropout": 0.35,
+        "max_len": 256,
+        "batch_size": 32,
+        "epochs": 5,
+        "lr": 0.001
+      }
+    },
+    "distilbert": {
+      "test_accuracy": 0.897,
+      "test_macro_f1": 0.897,
+      "hyperparams": {
+        "model": "distilbert-base-uncased",
+        "max_len": 256,
+        "batch_size": 16,
+        "epochs": 3,
+        "lr": 2e-05,
+        "warmup_ratio": 0.1,
+        "weight_decay": 0.01
+      }
+    }
+  },
+  "misclassified_examples": [
+    {
+      "index": 1,
+      "true_label": "negative",
+      "pred_label": "positive",
+      "text_snippet": "Okay, sure, this film will never win an oscar. Citizen cane this film is not... BUT why does every film have to be scrutinized? when was the last time you saw a film that was funny not becuase it was good, but because it was goofy? doesn't anyone remember roger corman, king of exploitation?<br /><br />well, I had fun. I liked the cheese. just go in not expecting to think, and prepare to throw popc"
+    },
+    {
+      "index": 8,
+      "true_label": "positive",
+      "pred_label": "negative",
+      "text_snippet": "Great cult flick for MST-3K types: Richard Boone is a mess -- bad hair, arthritis, even his dark glasses aren't right; about as good as a bad dino-flick can get... actually, that charging saber-toothed Styracosaurus was pretty cool -- maybe Spielberg should take a couple of notes from that one."
+    },
+    {
+      "index": 14,
+      "true_label": "positive",
+      "pred_label": "negative",
+      "text_snippet": "Duck_of_Death needs to watch this film again, as his major criticism is completely baseless. The film never once forgot about the time delay, and it was mentioned explicitly in a couple of places. The crew were never shown having conversations with mission control that didn't obey the time delay rules.<br /><br />One thing I did think was a bit far-fetched was the amount of risk involved - would a"
+    },
+    {
+      "index": 31,
+      "true_label": "positive",
+      "pred_label": "negative",
+      "text_snippet": "Nightbreed blew my mind the first time I saw it. And it's held up quite well over the years. The sets and monster effects work, are some of the best I've ever seen. Nobody I know seems to have seen this film, which I believe tanked at the box office, because of the lack of interest in horror, in the early nineties. It plays like a dark, horrific fairy tale, and is a lot deeper, then you'd think, w"
+    },
+    {
+      "index": 50,
+      "true_label": "negative",
+      "pred_label": "positive",
+      "text_snippet": "This film's a big bore. It has a plenty of Predictable plots & endless sentiments from the start. It starts good with a classy number but seems lost midway.<br /><br />Surya & Jyothika's on screen chemistry works out really good & a good part by Bhoomika. Why include Vadivelu in it? He disappears totally after a good half an hour!. Santhanam proves his wit again by timing comedy.<br /><br />AR's t"
+    }
+  ]
+}

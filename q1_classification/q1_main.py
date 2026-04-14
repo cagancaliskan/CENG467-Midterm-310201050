@@ -234,3 +234,154 @@ loss.backward()
 # evaluate the final bilstm model on the unseen test set
 test_acc_lstm, test_f1_lstm, test_preds_lstm = eval_seq(lstm_clf, dl_te)
 print(f"  Test → Acc: {test_acc_lstm:.4f}  Macro-F1: {test_f1_lstm:.4f}  ({time.time()-t0:.1f}s)\n")
+
+# --- 5. model 3 - distilbert ---
+print("[MODEL 3] DistilBERT (distilbert-base-uncased, fine-tuned)")
+
+BERT_MAX_LEN = 256
+BERT_BATCH   = 16
+BERT_EPOCHS  = 3
+BERT_LR      = 2e-5
+WARMUP_RATIO = 0.1
+
+tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
+
+class BertIMDbDataset(Dataset):
+    def __init__(self, texts, labels):
+        self.enc    = tokenizer(list(texts), truncation=True, padding="max_length",
+                                max_length=BERT_MAX_LEN, return_tensors="pt")
+        self.labels = torch.tensor(list(labels), dtype=torch.long)
+    def __len__(self): return len(self.labels)
+    def __getitem__(self, i):
+        return {k: v[i] for k, v in self.enc.items()}, self.labels[i]
+
+bd_tr = DataLoader(BertIMDbDataset(texts_train, labels_train), batch_size=BERT_BATCH, shuffle=True)
+bd_vl = DataLoader(BertIMDbDataset(texts_val,   labels_val),   batch_size=BERT_BATCH)
+bd_te = DataLoader(BertIMDbDataset(texts_test,  labels_test),  batch_size=BERT_BATCH)
+
+bert = DistilBertForSequenceClassification.from_pretrained(
+    "distilbert-base-uncased", num_labels=2).to(DEVICE)
+
+opt_bert   = torch.optim.AdamW(bert.parameters(), lr=BERT_LR, weight_decay=0.01)
+tot_steps  = len(bd_tr) * BERT_EPOCHS
+scheduler  = get_linear_schedule_with_warmup(
+    opt_bert,
+    num_warmup_steps  = int(tot_steps * WARMUP_RATIO),
+    num_training_steps= tot_steps,
+)
+
+def eval_bert(model, dl):
+    model.eval()
+    preds, truths = [], []
+    with torch.no_grad():
+        for batch, labels in dl:
+            batch  = {k: v.to(DEVICE) for k, v in batch.items()}
+            logits = model(**batch).logits
+            p      = logits.argmax(1).cpu().tolist()
+            preds  += p
+            truths += labels.tolist()
+    return accuracy_score(truths, preds), f1_score(truths, preds, average="macro"), preds
+
+t0 = time.time()
+for ep in range(BERT_EPOCHS):
+    bert.train(); total_loss = 0
+    for batch, labels in bd_tr:
+        batch  = {k: v.to(DEVICE) for k, v in batch.items()}
+        labels = labels.to(DEVICE)
+        opt_bert.zero_grad()
+        loss = bert(**batch, labels=labels).loss
+                # backpropagate errors and step the optimizer
+loss.backward()
+        nn.utils.clip_grad_norm_(bert.parameters(), 1.0)
+        opt_bert.step(); scheduler.step()
+        total_loss += loss.item()
+    va, vf, _ = eval_bert(bert, bd_vl)
+    print(f"  Epoch {ep+1}/{BERT_EPOCHS} | Loss: {total_loss/len(bd_tr):.4f}  Val Acc: {va:.4f}  Val F1: {vf:.4f}")
+
+test_acc_bert, test_f1_bert, test_preds_bert = eval_bert(bert, bd_te)
+print(f"  Test → Acc: {test_acc_bert:.4f}  Macro-F1: {test_f1_bert:.4f}  ({time.time()-t0:.1f}s)\n")
+
+# --- 6. misclassification analysis  (distilbert, 5 samples) ---
+print("[STEP 6] Misclassification Analysis – DistilBERT")
+label_name = {0: "negative", 1: "positive"}
+misclassified = []
+for i, (pred, true) in enumerate(zip(test_preds_bert, labels_test)):
+    if pred != true:
+        misclassified.append({
+            "index"     : i,
+            "true_label": label_name[true],
+            "pred_label": label_name[pred],
+            "text_snippet": texts_test[i][:400],
+        })
+for m in misclassified[:5]:
+    print(f"\n  [{m['index']}] TRUE={m['true_label']}  PRED={m['pred_label']}")
+    print(f"  \"{m['text_snippet'][:200]}...\"")
+
+
+# --- 7. save all results to json ---
+results = {
+    "meta": {
+        "student_id" : "310201050",
+        "seed"       : SEED,
+        "device"     : str(DEVICE),
+        "dataset"    : "IMDb",
+        "splits"     : {"train": TRAIN_SIZE, "val": VAL_SIZE, "test": TEST_SIZE},
+    },
+    "tokenization_strategies": {
+        "strategy_A": "Whitespace split + lowercase + HTML removal + stopword removal  → used by TF-IDF",
+        "strategy_B": "NLTK word_tokenize + lowercase + HTML removal (no stopword removal) → used by BiLSTM",
+        "strategy_C": "WordPiece subword tokenization via DistilBertTokenizerFast → used by DistilBERT",
+    },
+    "models": {
+        "tfidf_lr": {
+            "val_accuracy" : round(val_acc_lr,   4),
+            "val_macro_f1" : round(val_f1_lr,    4),
+            "test_accuracy": round(test_acc_lr,  4),
+            "test_macro_f1": round(test_f1_lr,   4),
+            "hyperparams"  : {
+                "max_features": 30000, "ngram_range": "(1,2)",
+                "sublinear_tf": True,  "C": 0.7,
+            },
+        },
+        "bilstm": {
+            "test_accuracy": round(test_acc_lstm, 4),
+            "test_macro_f1": round(test_f1_lstm,  4),
+            "hyperparams"  : {
+                "vocab_size": MAX_VOCAB, "embed_dim": EMBED_DIM,
+                "hidden_dim": HIDDEN_DIM, "num_layers": LSTM_LAYERS,
+                "dropout": DROPOUT_LSTM, "max_len": MAX_LEN_LSTM,
+                "batch_size": BATCH_LSTM, "epochs": EPOCHS_LSTM, "lr": LR_LSTM,
+            },
+        },
+        "distilbert": {
+            "test_accuracy": round(test_acc_bert, 4),
+            "test_macro_f1": round(test_f1_bert,  4),
+            "hyperparams"  : {
+                "model"      : "distilbert-base-uncased",
+                "max_len"    : BERT_MAX_LEN,
+                "batch_size" : BERT_BATCH,
+                "epochs"     : BERT_EPOCHS,
+                "lr"         : BERT_LR,
+                "warmup_ratio": WARMUP_RATIO,
+                "weight_decay": 0.01,
+            },
+        },
+    },
+    "misclassified_examples": misclassified[:5],
+}
+
+out_path = os.path.join(OUT_DIR, "q1_results.json")
+with open(out_path, "w", encoding="utf-8") as f:
+    json.dump(results, f, indent=2, ensure_ascii=False)
+
+# --- 8. final summary table ---
+print(f"\n{'='*55}")
+print(f"  FINAL RESULTS  (Test Set, n={TEST_SIZE})")
+print(f"{'='*55}")
+print(f"  {'Model':<22} {'Accuracy':>10}  {'Macro-F1':>10}")
+print(f"  {'-'*50}")
+print(f"  {'TF-IDF + LR':<22} {test_acc_lr:>10.4f}  {test_f1_lr:>10.4f}")
+print(f"  {'BiLSTM':<22} {test_acc_lstm:>10.4f}  {test_f1_lstm:>10.4f}")
+print(f"  {'DistilBERT':<22} {test_acc_bert:>10.4f}  {test_f1_bert:>10.4f}")
+print(f"{'='*55}")
+print(f"\n  Results saved → {out_path}")
