@@ -44,3 +44,121 @@ DEVICE = (
 )
 
 print(f"\n{'='*60}")
+print(f"  CENG 467 – Question 2: Named Entity Recognition")
+print(f"  Student ID : 310201050  |  Seed : {SEED}")
+print(f"  Device     : {DEVICE}")
+print(f"{'='*60}\n")
+
+OUT_DIR = "q2_results"
+os.makedirs(OUT_DIR, exist_ok=True)
+
+# --- 1.  data loading - conll-2003 (multi-source download with bio normalisation) ---
+print("[STEP 1] Loading CoNLL-2003 …")
+
+CACHE_DIR = "./conll2003_cache"
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+LABELS     = ["O", "B-PER", "I-PER", "B-ORG", "I-ORG",
+              "B-LOC", "I-LOC", "B-MISC", "I-MISC"]
+NUM_LABELS = len(LABELS)
+id2label   = {i: l for i, l in enumerate(LABELS)}
+label2id   = {l: i for i, l in enumerate(LABELS)}
+TAG_KEY    = "ner_tags"
+
+def to_bio(tag_seq):
+    """Normalise an IOB1 tag sequence to BIO (IOB2). Idempotent on BIO input."""
+    out, prev = [], "O"
+    for tag in tag_seq:
+        if tag.startswith("I-"):
+            etype = tag[2:]
+            # If previous tag is O or a different type, this I- is actually a B-
+            if prev == "O" or prev[2:] != etype:
+                out.append("B-" + etype)
+            else:
+                out.append(tag)
+        else:
+            out.append(tag)
+        prev = out[-1]
+    return out
+
+def parse_conll_file(path):
+    """Parse CoNLL-2003 BIO/IOB1 file → list of {tokens, ner_tags} dicts."""
+    sentences = []
+    toks, tags = [], []
+    with open(path, "r", encoding="utf-8") as f:
+        # read line by line to parse the conll format
+        for line in f:
+            line = line.rstrip("\n")
+            # docstart means a new document is starting, we can ignore it
+                        # docstart means a new document is starting, skip it
+if not line or line.startswith("-DOCSTART-"):
+                if toks:
+                    sentences.append({"tokens": toks, "ner_tags": to_bio(tags)})
+                    toks, tags = [], []
+                continue
+            parts = line.split()
+            if len(parts) >= 4:
+                toks.append(parts[0])
+                tags.append(parts[-1])
+        if toks:
+            sentences.append({"tokens": toks, "ner_tags": to_bio(tags)})
+    return sentences
+
+# ── Source 1: deepai.org zip (preferred — contains train.txt/valid.txt/test.txt)
+def try_deepai():
+    target = {"train": "train.txt", "validation": "valid.txt", "test": "test.txt"}
+    if all(os.path.exists(os.path.join(CACHE_DIR, fn)) for fn in target.values()):
+        return {split: os.path.join(CACHE_DIR, fn) for split, fn in target.items()}
+    print("  Trying deepai.org mirror …")
+    zip_path = os.path.join(CACHE_DIR, "conll2003.zip")
+    urllib.request.urlretrieve("https://data.deepai.org/conll2003.zip", zip_path)
+    with zipfile.ZipFile(zip_path, "r") as z:
+        z.extractall(CACHE_DIR)
+    paths = {split: os.path.join(CACHE_DIR, fn) for split, fn in target.items()}
+    if not all(os.path.exists(p) for p in paths.values()):
+        raise FileNotFoundError("deepai.org zip did not contain expected files")
+    return paths
+
+# ── Source 2: synalp/NER on GitHub (fallback — IOB1, normalised on parse)
+SYNALP_URLS = {
+    "train"      : "https://raw.githubusercontent.com/synalp/NER/master/corpus/CoNLL-2003/eng.train",
+    "validation" : "https://raw.githubusercontent.com/synalp/NER/master/corpus/CoNLL-2003/eng.testa",
+    "test"       : "https://raw.githubusercontent.com/synalp/NER/master/corpus/CoNLL-2003/eng.testb",
+}
+SYNALP_FILES = {"train": "synalp_train.txt", "validation": "synalp_valid.txt", "test": "synalp_test.txt"}
+
+def try_synalp():
+    paths = {}
+    print("  Trying synalp/NER mirror …")
+    for split, url in SYNALP_URLS.items():
+        fp = os.path.join(CACHE_DIR, SYNALP_FILES[split])
+        if not os.path.exists(fp):
+            print(f"    downloading {split} …")
+            urllib.request.urlretrieve(url, fp)
+        paths[split] = fp
+    return paths
+
+paths = None
+for fn in (try_deepai, try_synalp):
+    try:
+        paths = fn()
+        break
+    except Exception as e:
+        print(f"    failed: {e}")
+        continue
+
+if paths is None:
+    raise RuntimeError("Could not download CoNLL-2003 from any mirror.")
+
+raw = {split: parse_conll_file(p) for split, p in paths.items()}
+
+print(f"  Labels ({NUM_LABELS}): {LABELS}")
+print(f"  Train: {len(raw['train'])}  |  Val: {len(raw['validation'])}  |  Test: {len(raw['test'])}\n")
+
+# Sanity: warn on any unknown label after normalisation
+seen_labels = {t for split in raw.values() for s in split for t in s["ner_tags"]}
+unknown = seen_labels - set(LABELS)
+if unknown:
+    print(f"  [WARN] unknown labels in data: {unknown} (will be mapped to O)")
+
+# --- 2.  build vocabulary (for bilstm-crf) ---
