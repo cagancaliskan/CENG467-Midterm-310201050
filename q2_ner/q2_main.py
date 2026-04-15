@@ -162,3 +162,44 @@ if unknown:
     print(f"  [WARN] unknown labels in data: {unknown} (will be mapped to O)")
 
 # --- 2.  build vocabulary (for bilstm-crf) ---
+print("[STEP 2] Building word vocabulary for BiLSTM-CRF …")
+
+word_counter = Counter()
+for ex in raw["train"]:
+    for tok in ex["tokens"]:
+        word_counter[tok.lower()] += 1
+
+VOCAB_WORDS = ["<PAD>", "<UNK>"] + [w for w, c in word_counter.most_common() if c >= 2]
+w2i         = {w: i for i, w in enumerate(VOCAB_WORDS)}
+print(f"  Vocabulary size: {len(VOCAB_WORDS)}\n")
+
+def encode_tokens(toks):
+    return [w2i.get(t.lower(), 1) for t in toks]
+
+def encode_tags(tags):
+    return [label2id.get(t, label2id["O"]) for t in tags]
+
+# --- 3.  model 1 - bilstm-crf ---
+print("[MODEL 1] BiLSTM-CRF")
+
+EMBED_DIM    = 96
+HIDDEN_DIM   = 192
+DROPOUT_LSTM = 0.40
+BATCH_LSTM   = 32
+EPOCHS_LSTM  = 6
+LR_LSTM      = 8e-4
+GRAD_CLIP    = 1.0
+
+class CoNLLSeqDataset(Dataset):
+    def __init__(self, sentences):
+        self.X = [encode_tokens(s["tokens"])  for s in sentences]
+        self.Y = [encode_tags(s["ner_tags"])  for s in sentences]
+    def __len__(self): return len(self.X)
+    def __getitem__(self, i):
+        return (
+            torch.tensor(self.X[i], dtype=torch.long),
+            torch.tensor(self.Y[i], dtype=torch.long),
+        )
+
+def collate_seq(batch):
+    xs, ys  = zip(*batch)
