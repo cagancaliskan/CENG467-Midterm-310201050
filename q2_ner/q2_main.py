@@ -203,3 +203,83 @@ class CoNLLSeqDataset(Dataset):
 
 def collate_seq(batch):
     xs, ys  = zip(*batch)
+    lengths = torch.tensor([len(x) for x in xs])
+    x_pad   = pad_sequence(xs, batch_first=True, padding_value=0)
+    y_pad   = pad_sequence(ys, batch_first=True, padding_value=label2id["O"])
+    max_len = x_pad.size(1)
+    mask    = (torch.arange(max_len)[None, :] < lengths[:, None])
+    return x_pad, y_pad, mask
+
+ds_tr = CoNLLSeqDataset(raw["train"])
+ds_vl = CoNLLSeqDataset(raw["validation"])
+ds_te = CoNLLSeqDataset(raw["test"])
+
+dl_tr = DataLoader(ds_tr, batch_size=BATCH_LSTM, shuffle=True,  collate_fn=collate_seq)
+dl_vl = DataLoader(ds_vl, batch_size=BATCH_LSTM, shuffle=False, collate_fn=collate_seq)
+dl_te = DataLoader(ds_te, batch_size=BATCH_LSTM, shuffle=False, collate_fn=collate_seq)
+
+# using torchcrf for the crf layer to make life easier
+class BiLSTM_CRF(nn.Module):
+    def __init__(self, vocab_size, embed_dim, hidden, num_tags, dropout=0.4):
+        super().__init__()
+        self.embed = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
+        self.drop  = nn.Dropout(dropout)
+        self.lstm  = nn.LSTM(embed_dim, hidden, batch_first=True,
+                             bidirectional=True, num_layers=1)
+        self.fc    = nn.Linear(hidden * 2, num_tags)
+        self.crf   = CRF(num_tags, batch_first=True)
+
+    def emissions(self, x):
+        e = self.drop(self.embed(x))
+        h, _ = self.lstm(e)
+        return self.fc(self.drop(h))
+
+    def forward(self, x, mask, tags=None):
+        emi = self.emissions(x)
+        if tags is not None:
+                        # return the negative log likelihood for training
+return -self.crf(emi, tags, mask=mask, reduction="mean")
+                # during eval, use viterbi decoding to get best path
+return self.crf.decode(emi, mask=mask)
+
+model_lstm = BiLSTM_CRF(len(VOCAB_WORDS), EMBED_DIM, HIDDEN_DIM, NUM_LABELS, DROPOUT_LSTM).to(DEVICE)
+opt_lstm   = torch.optim.Adam(model_lstm.parameters(), lr=LR_LSTM, weight_decay=1e-5)
+
+def eval_bilstm_crf(model, dl):
+    model.eval()
+    y_true_all, y_pred_all = [], []
+    with torch.no_grad():
+        for xb, yb, mask in dl:
+            xb   = xb.to(DEVICE)
+            mb   = mask.to(DEVICE)
+            preds = model(xb, mask=mb)
+            for i, p in enumerate(preds):
+                length = mask[i].sum().item()
+                y_pred_all.append([id2label[t] for t in p[:length]])
+                y_true_all.append([id2label[t] for t in yb[i, :length].tolist()])
+    return y_true_all, y_pred_all
+
+t0 = time.time()
+for ep in range(EPOCHS_LSTM):
+    model_lstm.train(); total_loss = 0
+    for xb, yb, mask in dl_tr:
+        xb, yb, mb = xb.to(DEVICE), yb.to(DEVICE), mask.to(DEVICE)
+        opt_lstm.zero_grad()
+        loss = model_lstm(xb, mask=mb, tags=yb)
+        loss.backward()
+        nn.utils.clip_grad_norm_(model_lstm.parameters(), GRAD_CLIP)
+        opt_lstm.step()
+        total_loss += loss.item()
+    yt, yp = eval_bilstm_crf(model_lstm, dl_vl)
+    f1_dev = f1_score(yt, yp)
+    print(f"  Epoch {ep+1}/{EPOCHS_LSTM} | Loss: {total_loss/len(dl_tr):.4f}  Val-F1: {f1_dev:.4f}")
+
+yt_lstm, yp_lstm = eval_bilstm_crf(model_lstm, dl_te)
+prec_lstm  = precision_score(yt_lstm, yp_lstm)
+rec_lstm   = recall_score(yt_lstm, yp_lstm)
+f1_lstm    = f1_score(yt_lstm, yp_lstm)
+print(f"  Test → P: {prec_lstm:.4f}  R: {rec_lstm:.4f}  F1: {f1_lstm:.4f}  ({time.time()-t0:.1f}s)\n")
+report_lstm = classification_report(yt_lstm, yp_lstm, digits=4)
+
+# --- 4.  model 2 - distilbert for token classification ---
+print("[MODEL 2] DistilBERT for Token Classification")
