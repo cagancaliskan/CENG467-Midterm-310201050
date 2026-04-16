@@ -283,3 +283,231 @@ report_lstm = classification_report(yt_lstm, yp_lstm, digits=4)
 
 # --- 4.  model 2 - distilbert for token classification ---
 print("[MODEL 2] DistilBERT for Token Classification")
+
+BERT_MAX_LEN = 128
+BERT_BATCH   = 16
+BERT_EPOCHS  = 3
+BERT_LR      = 3e-5
+WARMUP_RATIO = 0.1
+
+tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-cased")
+
+def tokenise_and_align(token_lists, tag_lists):
+    enc = tokenizer(
+        token_lists,
+        is_split_into_words=True,
+        truncation=True,
+        padding="max_length",
+        max_length=BERT_MAX_LEN,
+        return_tensors="pt",
+    )
+    aligned = []
+    for i, tag_seq in enumerate(tag_lists):
+        wids   = enc.word_ids(batch_index=i)
+        prev   = None
+        labs   = []
+        for wid in wids:
+            if wid is None:
+                labs.append(-100)
+            elif wid != prev:
+                labs.append(label2id.get(tag_seq[wid], label2id["O"]))
+            else:
+                labs.append(-100)
+            prev = wid
+        aligned.append(labs)
+    enc["labels"] = torch.tensor(aligned, dtype=torch.long)
+    return enc
+
+class BertNERDataset(Dataset):
+    def __init__(self, sentences):
+        token_lists = [s["tokens"]   for s in sentences]
+        tag_lists   = [s["ner_tags"] for s in sentences]
+        self.enc    = tokenise_and_align(token_lists, tag_lists)
+    def __len__(self): return self.enc["input_ids"].size(0)
+    def __getitem__(self, i):
+        return {k: v[i] for k, v in self.enc.items()}
+
+bd_tr = DataLoader(BertNERDataset(raw["train"]),      batch_size=BERT_BATCH, shuffle=True)
+bd_vl = DataLoader(BertNERDataset(raw["validation"]), batch_size=BERT_BATCH)
+bd_te = DataLoader(BertNERDataset(raw["test"]),       batch_size=BERT_BATCH)
+
+bert = DistilBertForTokenClassification.from_pretrained(
+    "distilbert-base-cased",
+    num_labels=NUM_LABELS,
+    id2label=id2label,
+    label2id=label2id,
+).to(DEVICE)
+
+opt_bert  = torch.optim.AdamW(bert.parameters(), lr=BERT_LR, weight_decay=0.01)
+total_st  = len(bd_tr) * BERT_EPOCHS
+scheduler = get_linear_schedule_with_warmup(
+    opt_bert,
+    num_warmup_steps  = int(total_st * WARMUP_RATIO),
+    num_training_steps= total_st,
+)
+
+def eval_bert_ner(model, dl):
+    model.eval()
+    y_true, y_pred = [], []
+    with torch.no_grad():
+        for batch in dl:
+            inputs = {k: v.to(DEVICE) for k, v in batch.items() if k != "labels"}
+            labels = batch["labels"]
+            logits = model(**inputs).logits.cpu()
+            preds  = logits.argmax(-1)
+            for p_seq, l_seq in zip(preds, labels):
+                t_lst, p_lst = [], []
+                for p_t, l_t in zip(p_seq.tolist(), l_seq.tolist()):
+                    if l_t == -100: continue
+                    t_lst.append(id2label[l_t])
+                    p_lst.append(id2label[p_t])
+                y_true.append(t_lst)
+                y_pred.append(p_lst)
+    return y_true, y_pred
+
+t0 = time.time()
+for ep in range(BERT_EPOCHS):
+    bert.train(); total_loss = 0
+    for batch in bd_tr:
+        batch = {k: v.to(DEVICE) for k, v in batch.items()}
+        opt_bert.zero_grad()
+        out = bert(**batch)
+        out.loss.backward()
+        nn.utils.clip_grad_norm_(bert.parameters(), GRAD_CLIP)
+        opt_bert.step(); scheduler.step()
+        total_loss += out.loss.item()
+    yt, yp = eval_bert_ner(bert, bd_vl)
+    f1_dev = f1_score(yt, yp)
+    print(f"  Epoch {ep+1}/{BERT_EPOCHS} | Loss: {total_loss/len(bd_tr):.4f}  Val-F1: {f1_dev:.4f}")
+
+yt_bert, yp_bert = eval_bert_ner(bert, bd_te)
+prec_bert = precision_score(yt_bert, yp_bert)
+rec_bert  = recall_score(yt_bert,    yp_bert)
+f1_bert   = f1_score(yt_bert,        yp_bert)
+print(f"  Test → P: {prec_bert:.4f}  R: {rec_bert:.4f}  F1: {f1_bert:.4f}  ({time.time()-t0:.1f}s)\n")
+report_bert = classification_report(yt_bert, yp_bert, digits=4)
+
+# --- 5.  error analysis  -  boundary errors, type confusion, fp, fn ---
+print("[STEP 5] Error Analysis (DistilBERT predictions on test set)")
+
+def extract_entities(tags):
+    spans, i = [], 0
+    while i < len(tags):
+        if tags[i].startswith("B-"):
+            etype = tags[i][2:]
+            start = i; i += 1
+            while i < len(tags) and tags[i] == f"I-{etype}":
+                i += 1
+            spans.append((etype, start, i - 1))
+        else:
+            i += 1
+    return spans
+
+err_counts = defaultdict(int)
+boundary_examples, type_examples, fp_examples, fn_examples = [], [], [], []
+
+for sent_idx, (gold, pred) in enumerate(zip(yt_bert, yp_bert)):
+    gold_spans = set(extract_entities(gold))
+    pred_spans = set(extract_entities(pred))
+
+    matched_gold = set()
+    matched_pred = set()
+    for g in gold_spans:
+        for p in pred_spans:
+            if g == p:
+                err_counts["true_positive"] += 1
+                matched_gold.add(g); matched_pred.add(p)
+                break
+
+    for g in gold_spans - matched_gold:
+        boundary_hit = False
+        for p in pred_spans - matched_pred:
+            if g[0] == p[0] and not (g[2] < p[1] or p[2] < g[1]):
+                err_counts["boundary"] += 1
+                if len(boundary_examples) < 3:
+                    boundary_examples.append({"sent_idx": sent_idx, "gold": g, "pred": p})
+                matched_pred.add(p); boundary_hit = True; break
+        if boundary_hit: continue
+        type_hit = False
+        for p in pred_spans - matched_pred:
+            if g[1] == p[1] and g[2] == p[2] and g[0] != p[0]:
+                err_counts["type_confusion"] += 1
+                if len(type_examples) < 3:
+                    type_examples.append({"sent_idx": sent_idx, "gold": g, "pred": p})
+                matched_pred.add(p); type_hit = True; break
+        if type_hit: continue
+        err_counts["false_negative"] += 1
+        if len(fn_examples) < 3:
+            fn_examples.append({"sent_idx": sent_idx, "gold": g})
+
+    for p in pred_spans - matched_pred:
+        err_counts["false_positive"] += 1
+        if len(fp_examples) < 3:
+            fp_examples.append({"sent_idx": sent_idx, "pred": p})
+
+print(f"  True Positives  : {err_counts['true_positive']}")
+print(f"  Boundary errors : {err_counts['boundary']}")
+print(f"  Type confusion  : {err_counts['type_confusion']}")
+print(f"  False positives : {err_counts['false_positive']}")
+print(f"  False negatives : {err_counts['false_negative']}\n")
+
+# --- 6.  save results ---
+results = {
+    "meta": {
+        "student_id": "310201050", "seed": SEED, "device": str(DEVICE),
+        "dataset": "CoNLL-2003 (manual download, BIO-normalised)",
+        "num_labels": NUM_LABELS, "labels": LABELS,
+    },
+    "models": {
+        "bilstm_crf": {
+            "test_precision": round(prec_lstm, 4),
+            "test_recall"   : round(rec_lstm,  4),
+            "test_f1"       : round(f1_lstm,   4),
+            "report"        : report_lstm,
+            "hyperparams"   : {
+                "embed_dim": EMBED_DIM, "hidden_dim": HIDDEN_DIM,
+                "dropout": DROPOUT_LSTM, "batch": BATCH_LSTM,
+                "epochs": EPOCHS_LSTM, "lr": LR_LSTM,
+                "vocab_size": len(VOCAB_WORDS),
+            },
+        },
+        "distilbert": {
+            "test_precision": round(prec_bert, 4),
+            "test_recall"   : round(rec_bert,  4),
+            "test_f1"       : round(f1_bert,   4),
+            "report"        : report_bert,
+            "hyperparams"   : {
+                "model"        : "distilbert-base-cased",
+                "max_len"      : BERT_MAX_LEN,
+                "batch"        : BERT_BATCH,
+                "epochs"       : BERT_EPOCHS,
+                "lr"           : BERT_LR,
+                "warmup_ratio" : WARMUP_RATIO,
+                "weight_decay" : 0.01,
+            },
+        },
+    },
+    "error_analysis": {
+        "counts" : dict(err_counts),
+        "examples": {
+            "boundary"      : boundary_examples,
+            "type_confusion": type_examples,
+            "false_positive": fp_examples,
+            "false_negative": fn_examples,
+        },
+    },
+}
+
+with open(os.path.join(OUT_DIR, "q2_results.json"), "w", encoding="utf-8") as f:
+    json.dump(results, f, indent=2, ensure_ascii=False)
+
+# --- 7.  final summary table ---
+print(f"\n{'='*60}")
+print(f"  FINAL RESULTS – CoNLL-2003 Test Set")
+print(f"{'='*60}")
+print(f"  {'Model':<22} {'Precision':>11} {'Recall':>9} {'F1':>9}")
+print(f"  {'-'*55}")
+print(f"  {'BiLSTM-CRF':<22} {prec_lstm:>11.4f} {rec_lstm:>9.4f} {f1_lstm:>9.4f}")
+print(f"  {'DistilBERT (cased)':<22} {prec_bert:>11.4f} {rec_bert:>9.4f} {f1_bert:>9.4f}")
+print(f"{'='*60}")
+print(f"\n  Results saved → {OUT_DIR}/q2_results.json")

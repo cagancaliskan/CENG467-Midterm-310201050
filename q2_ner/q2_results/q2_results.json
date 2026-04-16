@@ -1,0 +1,197 @@
+{
+  "meta": {
+    "student_id": "310201050",
+    "seed": 3102,
+    "device": "mps",
+    "dataset": "CoNLL-2003 (manual download, BIO-normalised)",
+    "num_labels": 9,
+    "labels": [
+      "O",
+      "B-PER",
+      "I-PER",
+      "B-ORG",
+      "I-ORG",
+      "B-LOC",
+      "I-LOC",
+      "B-MISC",
+      "I-MISC"
+    ]
+  },
+  "models": {
+    "bilstm_crf": {
+      "test_precision": 0.801,
+      "test_recall": 0.6234,
+      "test_f1": 0.7011,
+      "report": "              precision    recall  f1-score   support\n\n         LOC     0.8725    0.7014    0.7777      1668\n        MISC     0.7621    0.5385    0.6311       702\n         ORG     0.7307    0.5473    0.6258      1661\n         PER     0.8091    0.6580    0.7258      1617\n\n   micro avg     0.8010    0.6234    0.7011      5648\n   macro avg     0.7936    0.6113    0.6901      5648\nweighted avg     0.7989    0.6234    0.6999      5648\n",
+      "hyperparams": {
+        "embed_dim": 96,
+        "hidden_dim": 192,
+        "dropout": 0.4,
+        "batch": 32,
+        "epochs": 6,
+        "lr": 0.0008,
+        "vocab_size": 10951
+      }
+    },
+    "distilbert": {
+      "test_precision": 0.8895,
+      "test_recall": 0.9056,
+      "test_f1": 0.8975,
+      "report": "              precision    recall  f1-score   support\n\n         LOC     0.9198    0.9292    0.9245      1666\n        MISC     0.7407    0.7977    0.7682       702\n         ORG     0.8667    0.8844    0.8754      1661\n         PER     0.9516    0.9498    0.9507      1615\n\n   micro avg     0.8895    0.9056    0.8975      5644\n   macro avg     0.8697    0.8903    0.8797      5644\nweighted avg     0.8910    0.9056    0.8981      5644\n",
+      "hyperparams": {
+        "model": "distilbert-base-cased",
+        "max_len": 128,
+        "batch": 16,
+        "epochs": 3,
+        "lr": 3e-05,
+        "warmup_ratio": 0.1,
+        "weight_decay": 0.01
+      }
+    }
+  },
+  "error_analysis": {
+    "counts": {
+      "true_positive": 5106,
+      "type_confusion": 250,
+      "false_positive": 236,
+      "false_negative": 217,
+      "boundary": 71
+    },
+    "examples": {
+      "boundary": [
+        {
+          "sent_idx": 28,
+          "gold": [
+            "MISC",
+            6,
+            8
+          ],
+          "pred": [
+            "MISC",
+            7,
+            8
+          ]
+        },
+        {
+          "sent_idx": 137,
+          "gold": [
+            "MISC",
+            2,
+            4
+          ],
+          "pred": [
+            "MISC",
+            3,
+            4
+          ]
+        },
+        {
+          "sent_idx": 139,
+          "gold": [
+            "MISC",
+            3,
+            5
+          ],
+          "pred": [
+            "MISC",
+            4,
+            5
+          ]
+        }
+      ],
+      "type_confusion": [
+        {
+          "sent_idx": 0,
+          "gold": [
+            "LOC",
+            2,
+            2
+          ],
+          "pred": [
+            "PER",
+            2,
+            2
+          ]
+        },
+        {
+          "sent_idx": 15,
+          "gold": [
+            "PER",
+            0,
+            0
+          ],
+          "pred": [
+            "ORG",
+            0,
+            0
+          ]
+        },
+        {
+          "sent_idx": 22,
+          "gold": [
+            "PER",
+            3,
+            3
+          ],
+          "pred": [
+            "LOC",
+            3,
+            3
+          ]
+        }
+      ],
+      "false_positive": [
+        {
+          "sent_idx": 0,
+          "pred": [
+            "MISC",
+            9,
+            9
+          ]
+        },
+        {
+          "sent_idx": 3,
+          "pred": [
+            "MISC",
+            18,
+            19
+          ]
+        },
+        {
+          "sent_idx": 20,
+          "pred": [
+            "MISC",
+            13,
+            14
+          ]
+        }
+      ],
+      "false_negative": [
+        {
+          "sent_idx": 22,
+          "gold": [
+            "LOC",
+            6,
+            6
+          ]
+        },
+        {
+          "sent_idx": 34,
+          "gold": [
+            "LOC",
+            8,
+            8
+          ]
+        },
+        {
+          "sent_idx": 48,
+          "gold": [
+            "MISC",
+            1,
+            2
+          ]
+        }
+      ]
+    }
+  }
+}
