@@ -141,3 +141,5 @@ scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=Tr
 def rouge_avg(refs, hyps):
     sums = {"rouge1": [], "rouge2": [], "rougeL": []}
     for r, h in zip(refs, hyps):
+        s = scorer.score(r, h)
+        for k in sums:
