@@ -126,3 +126,75 @@ DROPOUT   = 0.30
 EPOCHS    = 8
 LR        = 1e-3
 TF_RATIO  = 0.5
+
+# bi-directional gru to encode the german source text
+class Encoder(nn.Module):
+    def __init__(self, vocab_size, embed_dim, hidden, dropout):
+        super().__init__()
+        self.embed   = nn.Embedding(vocab_size, embed_dim, padding_idx=PAD_IDX)
+        self.lstm    = nn.LSTM(embed_dim, hidden, batch_first=True, bidirectional=True)
+        self.fc_h    = nn.Linear(hidden * 2, hidden)
+        self.fc_c    = nn.Linear(hidden * 2, hidden)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, x_lens):
+        emb = self.dropout(self.embed(x))
+        packed = pack_padded_sequence(emb, x_lens.cpu(), batch_first=True, enforce_sorted=False)
+        out_p, (h, c) = self.lstm(packed)
+        out, _ = pad_packed_sequence(out_p, batch_first=True, padding_value=0.0)
+        # Combine forward + backward final states
+        h_cat = torch.cat([h[0], h[1]], dim=1)
+        c_cat = torch.cat([c[0], c[1]], dim=1)
+        h_init = torch.tanh(self.fc_h(h_cat)).unsqueeze(0)
+        c_init = torch.tanh(self.fc_c(c_cat)).unsqueeze(0)
+        return out, (h_init, c_init)
+
+class BahdanauAttention(nn.Module):
+    def __init__(self, enc_hidden, dec_hidden):
+        super().__init__()
+        self.W = nn.Linear(enc_hidden + dec_hidden, dec_hidden)
+        self.v = nn.Linear(dec_hidden, 1, bias=False)
+    def forward(self, dec_h, enc_outs, mask):
+        # dec_h: (B, dec_hidden)   enc_outs: (B, T, enc_hidden)
+        T = enc_outs.size(1)
+        h_exp  = dec_h.unsqueeze(1).expand(-1, T, -1)
+        energy = torch.tanh(self.W(torch.cat([h_exp, enc_outs], dim=2)))
+        scores = self.v(energy).squeeze(2).masked_fill(~mask, -1e9)
+        return F.softmax(scores, dim=1)
+
+class Decoder(nn.Module):
+    def __init__(self, vocab_size, embed_dim, hidden, enc_hidden, dropout):
+        super().__init__()
+        self.embed     = nn.Embedding(vocab_size, embed_dim, padding_idx=PAD_IDX)
+        self.attention = BahdanauAttention(enc_hidden, hidden)
+        self.lstm      = nn.LSTM(embed_dim + enc_hidden, hidden, batch_first=True)
+        self.fc_out    = nn.Linear(hidden + enc_hidden + embed_dim, vocab_size)
+        self.dropout   = nn.Dropout(dropout)
+
+    def step(self, x, hidden, enc_outs, mask):
+        emb     = self.dropout(self.embed(x).unsqueeze(1))
+        h_state = hidden[0].squeeze(0)
+        attn    = self.attention(h_state, enc_outs, mask)
+        ctx     = torch.bmm(attn.unsqueeze(1), enc_outs)
+        out, hidden = self.lstm(torch.cat([emb, ctx], dim=2), hidden)
+        combined    = torch.cat([out.squeeze(1), ctx.squeeze(1), emb.squeeze(1)], dim=1)
+        return self.fc_out(combined), hidden, attn
+
+# finally got the seq2seq wiring right
+class Seq2Seq(nn.Module):
+    def __init__(self, src_vsize, tgt_vsize, embed_dim, hidden, dropout):
+        super().__init__()
+        self.encoder    = Encoder(src_vsize, embed_dim, hidden, dropout)
+        self.decoder    = Decoder(tgt_vsize, embed_dim, hidden, hidden * 2, dropout)
+        self.tgt_vsize  = tgt_vsize
+
+    def _src_mask(self, src, enc_len):
+        mask = (src != PAD_IDX)
+        if mask.size(1) > enc_len:
+            mask = mask[:, :enc_len]
+        elif mask.size(1) < enc_len:
+            mask = F.pad(mask, (0, enc_len - mask.size(1)), value=False)
+        return mask
+
+    def forward(self, src, src_lens, tgt, teacher_forcing=0.5):
+        B, T = tgt.shape
