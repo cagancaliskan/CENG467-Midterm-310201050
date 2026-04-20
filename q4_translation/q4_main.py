@@ -198,3 +198,71 @@ class Seq2Seq(nn.Module):
 
     def forward(self, src, src_lens, tgt, teacher_forcing=0.5):
         B, T = tgt.shape
+        enc_outs, hidden = self.encoder(src, src_lens)
+        mask = self._src_mask(src, enc_outs.size(1))
+        outs = torch.zeros(B, T, self.tgt_vsize, device=src.device)
+        x = tgt[:, 0]
+        for t in range(1, T):
+            logits, hidden, _ = self.decoder.step(x, hidden, enc_outs, mask)
+            outs[:, t] = logits
+            x = tgt[:, t] if random.random() < teacher_forcing else logits.argmax(1)
+        return outs
+
+    @torch.no_grad()
+    def greedy_generate(self, src, src_lens, max_len=50):
+        self.eval()
+        B = src.size(0)
+        enc_outs, hidden = self.encoder(src, src_lens)
+        mask = self._src_mask(src, enc_outs.size(1))
+        x = torch.full((B,), SOS_IDX, dtype=torch.long, device=src.device)
+        outs = []
+        for _ in range(max_len):
+            logits, hidden, _ = self.decoder.step(x, hidden, enc_outs, mask)
+            x = logits.argmax(1)
+            outs.append(x.cpu())
+        return torch.stack(outs, dim=1)
+
+# Build & summarise
+seq2seq = Seq2Seq(len(src_vocab), len(tgt_vocab), EMBED_DIM, HIDDEN, DROPOUT).to(DEVICE)
+n_params = sum(p.numel() for p in seq2seq.parameters())
+print(f"[MODEL A] Seq2Seq + attention   ({n_params/1e6:.2f}M parameters)")
+
+opt        = torch.optim.Adam(seq2seq.parameters(), lr=LR)
+scheduler  = torch.optim.lr_scheduler.StepLR(opt, step_size=3, gamma=0.5)
+criterion  = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
+
+t0 = time.time()
+for ep in range(EPOCHS):
+    seq2seq.train(); tr_loss = 0
+    for src, tgt, src_lens in dl_tr:
+        src, tgt = src.to(DEVICE), tgt.to(DEVICE)
+        opt.zero_grad()
+        logits = seq2seq(src, src_lens, tgt, TF_RATIO)
+        loss = criterion(logits[:, 1:].reshape(-1, logits.size(-1)),
+                         tgt   [:, 1:].reshape(-1))
+                # calculate gradients and update weights
+loss.backward()
+        nn.utils.clip_grad_norm_(seq2seq.parameters(), 1.0)
+        opt.step()
+        tr_loss += loss.item()
+
+    seq2seq.eval(); vl_loss = 0
+    with torch.no_grad():
+        for src, tgt, src_lens in dl_vl:
+            src, tgt = src.to(DEVICE), tgt.to(DEVICE)
+            logits = seq2seq(src, src_lens, tgt, 0.0)
+            vl_loss += criterion(
+                logits[:, 1:].reshape(-1, logits.size(-1)),
+                tgt   [:, 1:].reshape(-1)
+            ).item()
+
+    tr_avg, vl_avg = tr_loss/len(dl_tr), vl_loss/len(dl_vl)
+    print(f"  Epoch {ep+1}/{EPOCHS}  Train: {tr_avg:.4f}  Val: {vl_avg:.4f}  ValPPL: {np.exp(vl_avg):.2f}")
+    scheduler.step()
+print(f"  Training time: {time.time()-t0:.1f}s\n")
+
+# Generate test predictions
+def ids_to_text(ids):
+    out = []
+    for i in ids:
+        i = int(i)
