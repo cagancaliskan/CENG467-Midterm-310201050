@@ -1,0 +1,68 @@
+{
+  "meta": {
+    "student_id": "310201050",
+    "seed": 3102,
+    "device": "mps",
+    "dataset": "Multi30k (de→en)",
+    "splits": {
+      "train": 29000,
+      "val": 1014,
+      "test": 1000
+    }
+  },
+  "models": {
+    "seq2seq_attention": {
+      "bleu": 27.69,
+      "chrf": 49.34,
+      "meteor": 0.6267,
+      "bertscore_f1": 0.8882,
+      "config": {
+        "embed_dim": 256,
+        "hidden": 256,
+        "dropout": 0.3,
+        "epochs": 8,
+        "lr": 0.001,
+        "batch_size": 32,
+        "teacher_forcing": 0.5,
+        "src_vocab_size": 7835,
+        "tgt_vocab_size": 5895,
+        "n_parameters_M": 12.12,
+        "decoding": "greedy"
+      }
+    },
+    "marian_pretrained": {
+      "bleu": 39.66,
+      "chrf": 60.6,
+      "meteor": 0.7394,
+      "bertscore_f1": 0.9333,
+      "config": {
+        "model": "Helsinki-NLP/opus-mt-de-en",
+        "num_beams": 4,
+        "max_length": 128
+      }
+    }
+  },
+  "qualitative_examples": [
+    {
+      "index": 0,
+      "source_de": "Ein Mann mit einem orangefarbenen Hut, der etwas anstarrt.",
+      "reference_en": "A man in an orange hat starring at something.",
+      "seq2seq_output": "a man in an orange hat is something something .",
+      "marian_output": "A man with an orange hat staring at something."
+    },
+    {
+      "index": 100,
+      "source_de": "Eine glückliche Frau bereitet in einem Coffee-Shop eine Erfrischung zu.",
+      "reference_en": "A happy woman is preparing a refreshment at a coffee shop.",
+      "seq2seq_output": "a happy is preparing a a a a a a a a .",
+      "marian_output": "A happy woman prepares a refreshment in a coffee shop."
+    },
+    {
+      "index": 500,
+      "source_de": "Ein Tisch voller gerahmter Bilder, ein Freiluftmarkt.",
+      "reference_en": "A table full of pictures in frames, at an outdoor market.",
+      "seq2seq_output": "a table full of pictures pictures .",
+      "marian_output": "A table full of framed pictures, an outdoor market."
+    }
+  ]
+}

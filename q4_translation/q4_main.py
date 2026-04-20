@@ -266,3 +266,123 @@ def ids_to_text(ids):
     out = []
     for i in ids:
         i = int(i)
+        if i == EOS_IDX: break
+        if i in (PAD_IDX, SOS_IDX): continue
+        out.append(tgt_itos.get(i, UNK))
+    return " ".join(out)
+
+print("[STEP] Decoding test set with Seq2Seq (greedy) …")
+seq2seq_preds = []
+for src, _, src_lens in dl_te:
+    src = src.to(DEVICE)
+    pred_ids = seq2seq.greedy_generate(src, src_lens, max_len=MAX_LEN)
+    seq2seq_preds.extend(ids_to_text(row) for row in pred_ids)
+print(f"  Generated {len(seq2seq_preds)} translations.\n")
+
+# --- 5.  model b - marianmt (helsinki-nlp/opus-mt-de-en) ---
+print("[MODEL B] MarianMT  (Helsinki-NLP/opus-mt-de-en)")
+MARIAN_NAME = "Helsinki-NLP/opus-mt-de-en"
+m_tok   = MarianTokenizer.from_pretrained(MARIAN_NAME)
+m_model = MarianMTModel.from_pretrained(MARIAN_NAME).to(DEVICE)
+m_model.eval()
+
+t0 = time.time()
+marian_preds = []
+M_BATCH, M_BEAMS = 16, 4
+for i in range(0, len(de_test), M_BATCH):
+    batch = de_test[i : i + M_BATCH]
+    enc   = m_tok(batch, return_tensors="pt", padding=True, truncation=True, max_length=128).to(DEVICE)
+    with torch.no_grad():
+        out = m_model.generate(**enc, num_beams=M_BEAMS, max_length=128, early_stopping=True)
+    marian_preds.extend(m_tok.decode(o, skip_special_tokens=True) for o in out)
+    if (i // M_BATCH + 1) % 10 == 0:
+        print(f"  {min(i+M_BATCH, len(de_test))}/{len(de_test)} done")
+print(f"  Marian inference: {time.time()-t0:.1f}s\n")
+
+# --- 6.  metrics  (bleu, chrf, meteor, bertscore) ---
+print("[STEP 6] Computing metrics …")
+
+def safe_text(s): return s if s.strip() else "<empty>"
+
+def compute_metrics(hyps, refs, label):
+    hyps = [safe_text(h) for h in hyps]
+    bleu = sacrebleu.corpus_bleu(hyps, [refs]).score
+    chrf = sacrebleu.corpus_chrf(hyps, [refs]).score
+    meteor = float(np.mean([
+        meteor_score([nltk.word_tokenize(r.lower())], nltk.word_tokenize(h.lower()))
+        for h, r in zip(hyps, refs)
+    ]))
+    P, R, F = bert_score_fn(
+        hyps, refs,
+        lang        = "en",
+        model_type  = "distilbert-base-uncased",
+        verbose     = False,
+        batch_size  = 16,
+        device      = str(DEVICE),
+    )
+    bs = float(F.mean().item())
+    print(f"  {label}: BLEU={bleu:.2f}  ChrF={chrf:.2f}  METEOR={meteor:.4f}  BERTScore={bs:.4f}")
+    return {"bleu": round(bleu, 2),  "chrf":   round(chrf, 2),
+            "meteor": round(meteor, 4), "bertscore_f1": round(bs, 4)}
+
+seq2seq_metrics = compute_metrics(seq2seq_preds, en_test, "Seq2Seq+Attn")
+marian_metrics  = compute_metrics(marian_preds,  en_test, "MarianMT    ")
+
+# --- 7.  qualitative examples ---
+print("\n[STEP 7] Qualitative examples")
+qualitative = []
+for idx in [0, 100, 500]:
+    qualitative.append({
+        "index"          : idx,
+        "source_de"      : de_test[idx],
+        "reference_en"   : en_test[idx],
+        "seq2seq_output" : seq2seq_preds[idx],
+        "marian_output"  : marian_preds[idx],
+    })
+    print(f"\n  [{idx}] DE: {de_test[idx]}")
+    print(f"       REF   : {en_test[idx]}")
+    print(f"       S2S   : {seq2seq_preds[idx]}")
+    print(f"       Marian: {marian_preds[idx]}")
+
+# --- 8.  save ---
+results = {
+    "meta": {
+        "student_id": "310201050", "seed": SEED, "device": str(DEVICE),
+        "dataset": "Multi30k (de→en)",
+        "splits": {"train": len(de_train), "val": len(de_val), "test": len(de_test)},
+    },
+    "models": {
+        "seq2seq_attention": {
+            **seq2seq_metrics,
+            "config": {
+                "embed_dim": EMBED_DIM, "hidden": HIDDEN, "dropout": DROPOUT,
+                "epochs": EPOCHS, "lr": LR, "batch_size": BATCH,
+                "teacher_forcing": TF_RATIO,
+                "src_vocab_size": len(src_vocab), "tgt_vocab_size": len(tgt_vocab),
+                "n_parameters_M": round(n_params / 1e6, 2),
+                "decoding": "greedy",
+            },
+        },
+        "marian_pretrained": {
+            **marian_metrics,
+            "config": {"model": MARIAN_NAME, "num_beams": M_BEAMS, "max_length": 128},
+        },
+    },
+    "qualitative_examples": qualitative,
+}
+
+with open(os.path.join(OUT_DIR, "q4_results.json"), "w", encoding="utf-8") as f:
+    json.dump(results, f, indent=2, ensure_ascii=False)
+
+# --- 9.  summary ---
+print(f"\n{'='*55}")
+print(f"  FINAL RESULTS – Multi30k Test (n={len(de_test)})")
+print(f"{'='*55}")
+print(f"  {'Metric':<16} {'Seq2Seq+Attn':>16} {'MarianMT':>14}")
+print(f"  {'-'*48}")
+print(f"  {'BLEU':<16} {seq2seq_metrics['bleu']:>16.2f} {marian_metrics['bleu']:>14.2f}")
+print(f"  {'ChrF':<16} {seq2seq_metrics['chrf']:>16.2f} {marian_metrics['chrf']:>14.2f}")
+print(f"  {'METEOR':<16} {seq2seq_metrics['meteor']:>16.4f} {marian_metrics['meteor']:>14.4f}")
+print(f"  {'BERTScore F1':<16} {seq2seq_metrics['bertscore_f1']:>16.4f} {marian_metrics['bertscore_f1']:>14.4f}")
+print(f"{'='*55}")
+print(f"\n  Results saved → {OUT_DIR}/q4_results.json")
