@@ -232,3 +232,105 @@ GEN_LEN = 25
 TEMPERATURE = 0.9
 
 def trigram_generate(prompt, max_len=GEN_LEN):
+    out_ids = encode(prompt.split())
+    if len(out_ids) < 2:
+        out_ids = [UNK_ID, UNK_ID] + out_ids
+    for _ in range(max_len):
+        ctx = (out_ids[-2], out_ids[-1])
+        nxt = trigram[ctx]
+        if nxt:
+            ids, cs = zip(*nxt.items())
+            probs   = np.array(cs, dtype=float) / sum(cs)
+            choice  = int(np.random.choice(ids, p=probs))
+        else:
+            choice = random.randint(0, V - 1)
+        out_ids.append(choice)
+    return " ".join(i2w[i] for i in out_ids)
+
+def lstm_generate(prompt, max_len=GEN_LEN, temp=TEMPERATURE):
+    model_lstm.eval()
+    out_ids = encode(prompt.split())
+    hid     = model_lstm.init_hidden(1, DEVICE)
+    with torch.no_grad():
+        # Prime the hidden state with the prompt
+        for tok in out_ids[:-1]:
+            x   = torch.tensor([[tok]], device=DEVICE)
+            _, hid = model_lstm(x, hid)
+        x = torch.tensor([[out_ids[-1]]], device=DEVICE)
+        for _ in range(max_len):
+            logits, hid = model_lstm(x, hid)
+            probs = torch.softmax(logits[0, -1] / temp, dim=-1)
+            nxt   = int(torch.multinomial(probs, 1).item())
+            out_ids.append(nxt)
+            x = torch.tensor([[nxt]], device=DEVICE)
+    return " ".join(i2w[i] for i in out_ids)
+
+samples = []
+for p in PROMPTS:
+    tri_out  = trigram_generate(p)
+    lstm_out = lstm_generate(p)
+    samples.append({"prompt": p, "trigram": tri_out, "lstm": lstm_out})
+    print(f"\n  PROMPT     : {p}")
+    print(f"  Trigram    : {tri_out}")
+    print(f"  LSTM       : {lstm_out}")
+
+# --- 6. save results ---
+results = {
+    "meta": {
+        "student_id": "310201050", "seed": SEED, "device": str(DEVICE),
+        "dataset": "WikiText-2 (v1)",
+        "vocab_size": V,
+        "token_counts": {
+            "train": len(train_tokens),
+            "val"  : len(val_tokens),
+            "test" : len(test_tokens),
+        },
+    },
+    "models": {
+        "trigram_addk": {
+            "test_perplexity"     : round(trigram_test_ppl, 2),
+            "validation_perplexity": round(trigram_val_ppl, 2),
+            "config": {
+                "n"          : 3,
+                "smoothing"  : "add-k",
+                "k"          : K_SMOOTH,
+                "vocab_size" : V,
+            },
+        },
+        "lstm": {
+            "test_perplexity"     : round(lstm_test_ppl, 2),
+            "best_validation_ppl" : round(best_val, 2),
+            "config": {
+                "embed_dim"  : EMBED_DIM,
+                "hidden_dim" : HIDDEN_DIM,
+                "num_layers" : NUM_LAYERS,
+                "dropout"    : DROPOUT,
+                "bptt_len"   : BPTT_LEN,
+                "batch"      : BATCH,
+                "epochs"     : EPOCHS,
+                "lr"         : LR,
+                "grad_clip"  : GRAD_CLIP,
+                "n_parameters_M": round(n_lstm_params / 1e6, 2),
+            },
+        },
+    },
+    "text_generation": {
+        "config"  : {"max_len": GEN_LEN, "temperature": TEMPERATURE},
+        "samples" : samples,
+    },
+}
+
+out_path = os.path.join(OUT_DIR, "q5_results.json")
+with open(out_path, "w", encoding="utf-8") as f:
+    json.dump(results, f, indent=2, ensure_ascii=False)
+
+# --- 7. summary ---
+print(f"\n{'='*55}")
+print(f"  FINAL RESULTS – WikiText-2 Test Perplexity")
+print(f"{'='*55}")
+print(f"  {'Model':<28} {'Val PPL':>10} {'Test PPL':>10}")
+print(f"  {'-'*50}")
+print(f"  {'Trigram (add-k=0.01)':<28} {trigram_val_ppl:>10.2f} {trigram_test_ppl:>10.2f}")
+print(f"  {'2-layer LSTM':<28} {best_val:>10.2f} {lstm_test_ppl:>10.2f}")
+print(f"{'='*55}")
+print(f"\n  Results saved → {out_path}")
