@@ -1,0 +1,65 @@
+{
+  "meta": {
+    "student_id": "310201050",
+    "seed": 3102,
+    "device": "mps",
+    "dataset": "WikiText-2 (v1)",
+    "vocab_size": 33277,
+    "token_counts": {
+      "train": 2051910,
+      "val": 213886,
+      "test": 241211
+    }
+  },
+  "models": {
+    "trigram_addk": {
+      "test_perplexity": 3587.97,
+      "validation_perplexity": 3868.4,
+      "config": {
+        "n": 3,
+        "smoothing": "add-k",
+        "k": 0.01,
+        "vocab_size": 33277
+      }
+    },
+    "lstm": {
+      "test_perplexity": 353.41,
+      "best_validation_ppl": 389.69,
+      "config": {
+        "embed_dim": 192,
+        "hidden_dim": 256,
+        "num_layers": 2,
+        "dropout": 0.45,
+        "bptt_len": 35,
+        "batch": 20,
+        "epochs": 6,
+        "lr": 0.001,
+        "grad_clip": 0.25,
+        "n_parameters_M": 15.93
+      }
+    }
+  },
+  "text_generation": {
+    "config": {
+      "max_len": 25,
+      "temperature": 0.9
+    },
+    "samples": [
+      {
+        "prompt": "the city of",
+        "trigram": "the city of Zagreb . However , German mycologist Rolf Singer listed three subspecies , although it was then tied with Tower of Terror , with Julio Jones",
+        "lstm": "the city of achieving to October the kings before the soul . There are full , was <unk> , almost serving as the Bruins as a short school"
+      },
+      {
+        "prompt": "in the year",
+        "trigram": "in the year . Twenty @-@ four @-@ issue story arc to be in a Pepsi television advertisement in the north of the young characters into one of",
+        "lstm": "in the year – two season and the 17th of arguing and fought on Scotland and ₹ 85 ( 1 @.@ ) mi ; the storm – 16"
+      },
+      {
+        "prompt": "she said that",
+        "trigram": "she said that the problem in many cases from several teams that were arrested and killed four young black girls and football manager . Lawton and Sewell 's",
+        "lstm": "she said that it is \" that related is while deal as his political titles \" , by the first name on six side , being peaking by"
+      }
+    ]
+  }
+}
