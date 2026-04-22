@@ -128,3 +128,107 @@ EMBED_DIM   = 192
 HIDDEN_DIM  = 256
 NUM_LAYERS  = 2
 DROPOUT     = 0.45
+BPTT_LEN    = 35
+BATCH       = 20
+EPOCHS      = 6
+LR          = 1e-3
+GRAD_CLIP   = 0.25
+
+class LSTMLanguageModel(nn.Module):
+    def __init__(self, vocab_size, embed_dim, hidden, n_layers, dropout):
+        super().__init__()
+        self.embed   = nn.Embedding(vocab_size, embed_dim)
+        self.lstm    = nn.LSTM(embed_dim, hidden, num_layers=n_layers,
+                               dropout=dropout, batch_first=True)
+        self.fc      = nn.Linear(hidden, vocab_size)
+        self.dropout = nn.Dropout(dropout)
+        self.hidden  = hidden
+        self.layers  = n_layers
+
+    def forward(self, x, hid=None):
+        e        = self.dropout(self.embed(x))
+        out, hid = self.lstm(e, hid)
+        out      = self.dropout(out)
+        return self.fc(out), hid
+
+    def init_hidden(self, batch_size, device):
+        return (torch.zeros(self.layers, batch_size, self.hidden, device=device),
+                torch.zeros(self.layers, batch_size, self.hidden, device=device))
+
+# ── batchify into BPTT layout ────────────────────────────────────────────────
+def batchify(ids, bsz):
+    nb   = len(ids) // bsz
+    ids  = ids[: nb * bsz]
+    return torch.tensor(ids, dtype=torch.long).view(bsz, -1)
+
+train_data = batchify(train_ids, BATCH)
+val_data   = batchify(val_ids,   BATCH)
+test_data  = batchify(test_ids,  BATCH)
+print(f"  BPTT layout → train: {tuple(train_data.shape)}  val: {tuple(val_data.shape)}  test: {tuple(test_data.shape)}")
+
+def get_batch(source, i):
+    sl = min(BPTT_LEN, source.size(1) - 1 - i)
+    x  = source[:, i : i + sl]
+    y  = source[:, i + 1 : i + 1 + sl]
+    return x, y
+
+model_lstm = LSTMLanguageModel(V, EMBED_DIM, HIDDEN_DIM, NUM_LAYERS, DROPOUT).to(DEVICE)
+n_lstm_params = sum(p.numel() for p in model_lstm.parameters())
+print(f"  Parameters: {n_lstm_params/1e6:.2f}M")
+
+opt_lstm   = torch.optim.Adam(model_lstm.parameters(), lr=LR)
+scheduler  = torch.optim.lr_scheduler.StepLR(opt_lstm, step_size=2, gamma=0.5)
+criterion  = nn.CrossEntropyLoss()
+
+def evaluate(model, data):
+    model.eval()
+    total_loss, n_tok = 0.0, 0
+    hid = model.init_hidden(data.size(0), DEVICE)
+    with torch.no_grad():
+        for i in range(0, data.size(1) - 1, BPTT_LEN):
+            x, y = get_batch(data, i)
+            x, y = x.to(DEVICE), y.to(DEVICE)
+            hid  = tuple(h.detach() for h in hid)
+            logits, hid = model(x, hid)
+            loss = criterion(logits.reshape(-1, V), y.reshape(-1))
+            total_loss += loss.item() * y.numel()
+            n_tok      += y.numel()
+    return total_loss / n_tok, math.exp(total_loss / n_tok)
+
+t0 = time.time()
+best_val = float("inf")
+for ep in range(EPOCHS):
+    model_lstm.train()
+    total_loss, n_tok = 0.0, 0
+    hid = model_lstm.init_hidden(BATCH, DEVICE)
+    for i in range(0, train_data.size(1) - 1, BPTT_LEN):
+        x, y = get_batch(train_data, i)
+        x, y = x.to(DEVICE), y.to(DEVICE)
+        hid  = tuple(h.detach() for h in hid)
+        opt_lstm.zero_grad()
+        logits, hid = model_lstm(x, hid)
+        loss = criterion(logits.reshape(-1, V), y.reshape(-1))
+                    # propagate loss through time (BPTT)
+loss.backward()
+        nn.utils.clip_grad_norm_(model_lstm.parameters(), GRAD_CLIP)
+        opt_lstm.step()
+        total_loss += loss.item() * y.numel()
+        n_tok      += y.numel()
+
+    train_ppl   = math.exp(total_loss / n_tok)
+    val_loss, val_ppl = evaluate(model_lstm, val_data)
+    print(f"  Epoch {ep+1}/{EPOCHS} | TrainPPL: {train_ppl:7.2f}  ValPPL: {val_ppl:7.2f}")
+    scheduler.step()
+    best_val = min(best_val, val_ppl)
+
+test_loss, lstm_test_ppl = evaluate(model_lstm, test_data)
+print(f"  Test PPL: {lstm_test_ppl:.2f}    ({time.time()-t0:.1f}s)\n")
+
+# --- 5. text generation  (both models, three prompts) ---
+print("[STEP 5] Generating text samples …")
+
+PROMPTS = ["the city of", "in the year", "she said that"]
+GEN_LEN = 25
+TEMPERATURE = 0.9
+
+def trigram_generate(prompt, max_len=GEN_LEN):
