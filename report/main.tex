@@ -1,0 +1,221 @@
+% =============================================================================
+% CENG 467 – Natural Language Understanding and Generation
+% Take-Home Midterm Examination
+% Student ID: 310201050
+% Instructor: Prof. Dr. Aytuğ Onan
+% Date: April 2026
+% =============================================================================
+
+\documentclass[11pt,a4paper]{article}
+
+% ── Layout & encoding ────────────────────────────────────────────────────────
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage[a4paper, margin=2.5cm]{geometry}
+\usepackage{microtype}
+\usepackage{setspace}
+\onehalfspacing
+
+% ── Mathematics ──────────────────────────────────────────────────────────────
+\usepackage{amsmath, amssymb, amsthm}
+
+% ── Tables / figures ─────────────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{array}
+
+% ── Code listings (optional) ─────────────────────────────────────────────────
+\usepackage{listings}
+\usepackage{xcolor}
+\definecolor{codegray}{gray}{0.95}
+\lstset{
+    basicstyle      = \ttfamily\small,
+    backgroundcolor = \color{codegray},
+    breaklines      = true,
+    frame           = single,
+    numbers         = left,
+    numberstyle     = \tiny,
+    keywordstyle    = \color{blue},
+    commentstyle    = \color{gray},
+    stringstyle     = \color{red!70!black},
+    showstringspaces= false,
+}
+
+% ── Hyperlinks ───────────────────────────────────────────────────────────────
+\usepackage[colorlinks=true, linkcolor=black, citecolor=blue, urlcolor=blue]{hyperref}
+\usepackage{url}
+
+% ── Bibliography ─────────────────────────────────────────────────────────────
+\usepackage[numbers, sort&compress]{natbib}
+
+% =============================================================================
+% TITLE PAGE
+% =============================================================================
+\title{
+    \vspace{-1cm}
+    \large CENG 467 — Natural Language Understanding and Generation \\
+    \vspace{0.4cm}
+    \LARGE\textbf{Take-Home Midterm Examination} \\
+    \vspace{0.6cm}
+    \large A Comparative Study of Representation, Sequence Labeling, \\
+    Summarization, Translation and Language Modeling
+}
+\author{
+    \textbf{Student ID:} 310201050 \\
+    \vspace{0.2cm}
+    \small Instructor: Prof.\ Dr.\ Aytu\u{g} Onan \\
+    \small \.{I}zmir Institute of Technology --- Department of Computer Engineering
+}
+\date{April 2026}
+
+% =============================================================================
+\begin{document}
+\maketitle
+
+\thispagestyle{empty}
+\vspace{0.5cm}
+
+\begin{abstract}
+\noindent
+This report presents a controlled comparative study of five core
+NLP tasks: text classification, named entity recognition,
+text summarization, machine translation, and language modeling.
+For each task, two or three model families are evaluated on a
+shared benchmark dataset under fixed random seeds, consistent
+preprocessing pipelines, and held-out test sets that are used only
+once for final evaluation. Sparse, dense, and contextual
+representations are compared head-to-head, and qualitative error
+analyses are provided alongside the quantitative results. Across
+all five tasks, contextual representations from pretrained
+Transformer models outperform classical and from-scratch recurrent
+baselines, with the F1 gap reaching nearly 20 points for named
+entity recognition and a 10$\times$ perplexity reduction for
+language modelling. All experiments are reproducible from the
+accompanying code repository on an Apple M2 (8\,GB) device with
+seed 3102.
+\end{abstract}
+
+\vspace{0.5cm}
+\noindent
+\textbf{Repository:}
+\url{https://github.com/<your-github-username>/CENG467_Midterm_310201050}
+
+\vspace{1cm}
+\tableofcontents
+
+\newpage
+
+% =============================================================================
+% INTRODUCTION
+% =============================================================================
+\section{Introduction}
+
+This document presents the solutions to the five questions of the
+CENG 467 take-home midterm. Each section is self-contained, including
+its own dataset description, methodology, hyperparameters, results,
+and discussion.
+
+The study is conducted under three overarching constraints. First,
+all experiments use a fixed random seed (3102, derived from the
+author's student identifier) to ensure exact reproducibility.
+Second, dataset splits are kept consistent between models within a
+single question; the test set is touched exactly once at the end of
+each pipeline. Third, all training and inference is performed on a
+single Apple~M2 device with 8\,GB of RAM, which informs the choice
+of distilled and small-footprint models throughout the study.
+
+The complete source code is organised by question
+(\texttt{q1\_classification/}, \texttt{q2\_ner/}, etc.) and is
+available in the accompanying GitHub repository. Reproduction
+instructions are provided in the \texttt{README.md} file.
+
+\subsection{Headline Results}
+
+Table~\ref{tab:headline} summarises the principal finding from each
+question. In every case, the contextual or pretrained Transformer
+model outperforms the from-scratch baseline; the gap is largest where
+training data is most limited (NER) and on tasks where surface
+features are weakest (language modelling).
+
+\begin{table}[h]
+\centering
+\caption{Best result on each task and the from-scratch baseline.}
+\label{tab:headline}
+\small
+\begin{tabular}{llcc}
+\toprule
+Task & Headline metric & Baseline & Best (pretrained) \\
+\midrule
+Q1 Classification (IMDb)        & Macro-F1   & 0.7488 (BiLSTM)       & \textbf{0.8970} (DistilBERT) \\
+Q2 NER (CoNLL-2003)             & F1         & 0.7011 (BiLSTM-CRF)   & \textbf{0.8975} (DistilBERT) \\
+Q3 Summarization (CNN/DM)       & ROUGE-L    & 0.1883 (LexRank)      & \textbf{0.2580} (DistilBART) \\
+Q4 Translation (Multi30k de–en) & BLEU       & 27.69 (Seq2Seq)       & \textbf{39.66} (MarianMT)    \\
+Q5 Language Modeling (WikiText-2) & Test PPL & 3587.97 (Trigram)     & \textbf{353.41} (LSTM)       \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% =============================================================================
+% INCLUDE EACH QUESTION
+% =============================================================================
+\input{q1_section}
+\newpage
+\input{q2_section}
+\newpage
+\input{q3_section}
+\newpage
+\input{q4_section}
+\newpage
+\input{q5_section}
+
+% =============================================================================
+% CONCLUSION
+% =============================================================================
+\newpage
+\section{Conclusion}
+
+Across the five tasks studied, a consistent pattern emerges:
+contextual sub-word representations from pretrained Transformers
+outperform both classical statistical baselines and recurrent
+architectures trained from scratch, often by a substantial margin.
+The advantage is most pronounced when training data is limited
+(NER, MT) and when surface lexical features are weakly informative
+(language modelling). On the IMDb classification task, where the
+6{,}000-example training subset is small but the unigram signal is
+strong, the sparse TF-IDF baseline came surprisingly close to
+DistilBERT, even outperforming the from-scratch BiLSTM.
+
+The study also highlights three trade-offs that should temper any
+universal endorsement of contextual representations. First,
+inference cost: pretrained Transformers are dramatically more
+expensive than $n$-gram or LSTM baselines, a fact that became
+concrete during these experiments when the DistilBERT fine-tune for
+Q1 alone consumed roughly 45\,minutes on an M2. Second,
+faithfulness: abstractive Transformer decoders can hallucinate
+content not present in the source, a failure mode that extractive
+baselines structurally cannot exhibit (Q3, example 50). Third,
+transparency: a from-scratch model whose parameters one has
+trained, debugged, and inspected is qualitatively different from a
+downloaded checkpoint, and the educational and diagnostic value of
+the former is non-trivial. The Q4 Seq2Seq model exhibited a
+classic ``repetition trap'' (\textit{``a a a a a''}) in three of
+three qualitative samples, a failure mode that is invisible when
+one only consumes a pretrained black box.
+
+Reproducibility was treated as a first-class constraint throughout.
+Every result in this report can be regenerated by running the
+provided scripts on a comparable device with seed 3102. The
+associated repository contains the JSON output files used to
+populate every numeric cell in this report.
+
+% =============================================================================
+% REFERENCES
+% =============================================================================
+\newpage
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}
