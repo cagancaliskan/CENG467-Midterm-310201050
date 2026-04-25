@@ -1,0 +1,220 @@
+% ─────────────────────────────────────────────────────────────────
+% CENG 467 Midterm – Question 2: Named Entity Recognition
+% Student ID: 310201050
+% ─────────────────────────────────────────────────────────────────
+
+\section{Question 2: Named Entity Recognition}
+
+\subsection{Dataset and Annotation Structure}
+
+The CoNLL-2003 English shared-task corpus \cite{sang2003conll} is used. It
+consists of newswire articles from the Reuters news collection annotated
+with four entity types: Persons (\textsc{PER}), Organisations
+(\textsc{ORG}), Locations (\textsc{LOC}) and Miscellaneous entities
+(\textsc{MISC}). Annotations follow the BIO scheme (\textsc{B}-prefix
+for the first token of an entity, \textsc{I}-prefix for inside tokens, and
+\textsc{O} for non-entity tokens), yielding a 9-class tag set:
+$\{$O, B-PER, I-PER, B-ORG, I-ORG, B-LOC, I-LOC, B-MISC, I-MISC$\}$.
+
+The corpus is loaded from a static mirror because the HuggingFace
+\texttt{datasets} library (v3.0+) no longer supports script-based
+loaders and all official mirrors of CoNLL-2003 are script-based. The
+downloaded files are normalised to BIO tagging by an idempotent
+IOB1$\rightarrow$BIO conversion routine. The standard splits are then
+used as released: 14{,}041 training sentences, 3{,}250 validation
+sentences, and 3{,}453 test sentences. The test set is used
+\emph{exactly once} for final evaluation.
+
+\subsection{Token--Label Alignment}
+
+For the BiLSTM-CRF the alignment is trivial because the corpus is already
+pre-tokenised at the word level. For DistilBERT, however, each
+pre-tokenised word is further decomposed into one or more WordPiece
+sub-tokens. We adopt the canonical alignment scheme: \emph{the first
+sub-token of each word inherits the original BIO label, while subsequent
+sub-tokens are assigned the special ignore index $-100$}. The
+\textsc{CrossEntropyLoss} skips these positions, and during evaluation
+only the first sub-token of each word contributes to the predicted
+sequence, ensuring that entity-level metrics are computed against
+word-aligned predictions.
+
+\subsection{Models}
+
+\subsubsection{BiLSTM-CRF (Hybrid)}
+
+A single-layer bidirectional LSTM with a Conditional Random Field
+decoding layer \cite{lample2016neural} is trained from scratch. The
+CRF layer explicitly models tag-transition probabilities, which
+discourages illegal sequences such as \texttt{O B-PER I-LOC}.
+
+\begin{table}[h]
+\centering
+\caption{BiLSTM-CRF Hyperparameters}
+\label{tab:bilstm_crf_hp}
+\begin{tabular}{ll}
+\toprule
+Hyperparameter & Value \\
+\midrule
+Vocabulary size           & $10{,}951$ words (min freq.\ 2) \\
+Embedding dimension       & 96 \\
+Hidden dimension          & 192 \\
+Number of LSTM layers     & 1 (bidirectional) \\
+Dropout                   & 0.40 \\
+Batch size                & 32 \\
+Epochs                    & 6 \\
+Optimiser / LR            & Adam / $8 \times 10^{-4}$ \\
+Weight decay              & $10^{-5}$ \\
+Gradient clipping         & 1.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{DistilBERT (Contextual)}
+
+\texttt{distilbert-base-cased} is fine-tuned for token classification.
+The \emph{cased} variant is preferred because capitalisation is a strong
+NER feature in English news text (\textit{Apple} vs.\ \textit{apple}).
+
+\begin{table}[h]
+\centering
+\caption{DistilBERT Fine-Tuning Hyperparameters}
+\label{tab:bert_ner_hp}
+\begin{tabular}{ll}
+\toprule
+Hyperparameter & Value \\
+\midrule
+Pretrained model        & \texttt{distilbert-base-cased} \\
+Maximum sequence length & 128 \\
+Batch size              & 16 \\
+Epochs                  & 3 \\
+Learning rate           & $3 \times 10^{-5}$ \\
+Weight decay            & 0.01 \\
+Warmup ratio            & 10\% \\
+Gradient clipping       & 1.0 \\
+Scheduler               & Linear with warmup \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Evaluation Results}
+
+Entity-level Precision, Recall and F1 are computed using the
+\texttt{seqeval} library, which evaluates \emph{exact span matches}: a
+prediction is correct only if both the boundaries and the entity type
+match the gold annotation (Table~\ref{tab:q2_results}).
+
+\begin{table}[h]
+\centering
+\caption{CoNLL-2003 Test-Set Results (entity-level, seed 3102)}
+\label{tab:q2_results}
+\begin{tabular}{lccc}
+\toprule
+Model & Precision & Recall & F1 \\
+\midrule
+BiLSTM-CRF         & 0.8010 & 0.6234 & 0.7011 \\
+DistilBERT (cased) & \textbf{0.8895} & \textbf{0.9056} & \textbf{0.8975} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The contextual DistilBERT outperforms the from-scratch BiLSTM-CRF by
+nearly 20 F1 points, the largest margin observed across all five
+questions in this study. A per-class breakdown is given in
+Table~\ref{tab:q2_per_class}.
+
+\begin{table}[h]
+\centering
+\caption{Per-Entity F1 Scores on the Test Set}
+\label{tab:q2_per_class}
+\begin{tabular}{lcc}
+\toprule
+Entity Class & BiLSTM-CRF F1 & DistilBERT F1 \\
+\midrule
+\textsc{PER}  & 0.7258 & \textbf{0.9507} \\
+\textsc{LOC}  & 0.7777 & \textbf{0.9245} \\
+\textsc{ORG}  & 0.6258 & \textbf{0.8754} \\
+\textsc{MISC} & 0.6311 & \textbf{0.7682} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The relative gap between models is largest for \textsc{ORG} and
+\textsc{PER}, which contain the highest density of rare proper nouns,
+and smallest for \textsc{MISC}, which is intrinsically the noisiest
+entity class.
+
+\subsection{Error Analysis}
+
+The 5{,}644 gold entities in the test set produced the following
+DistilBERT error breakdown:
+
+\begin{table}[h]
+\centering
+\caption{DistilBERT Error Categories on the Test Set}
+\label{tab:q2_errors}
+\begin{tabular}{lr}
+\toprule
+Category & Count \\
+\midrule
+True Positives  & 5{,}106 \\
+Type confusion  & 250 \\
+False positives & 236 \\
+False negatives & 217 \\
+Boundary errors & 71 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three observations follow from this distribution.
+
+\paragraph{Boundary errors are remarkably rare.}
+Only 71 of the 5{,}644 gold spans (1.3\%) suffered from boundary
+mismatches, all but one of which involved \textsc{MISC} entities (e.g.\
+predicting only the head of a multi-word entity). The CRF layer of the
+BiLSTM-CRF model was originally introduced to suppress exactly this
+class of error, but DistilBERT's softmax classifier achieves a
+comparable result through context alone.
+
+\paragraph{Type confusion is the dominant error mode.}
+With 250 cases (4.4\% of the gold spans), type confusion is by far the
+most common DistilBERT error. Inspection of the recorded examples
+reveals classic CoNLL ambiguities: country names used metonymically for
+national teams (\textsc{LOC} tagged as \textsc{ORG}), surnames identical
+to place names (\textsc{LOC} vs.\ \textsc{PER}), and ambiguous
+sentence-initial proper nouns. These errors require world knowledge
+that cannot be extracted from the 14k-sentence training set alone.
+
+\paragraph{False positives concentrate in \textsc{MISC}.}
+All three of the recorded false-positive examples are \textsc{MISC}
+predictions over tokens that are not entities at all. \textsc{MISC} is a
+catch-all class for nationality adjectives, event names, and other
+``odd'' proper nouns; the model has learnt to over-predict it whenever
+capitalisation cues are present without strong contextual constraints.
+
+\subsection{Discussion: Role of Contextual Embeddings}
+
+The BiLSTM-CRF must learn word representations from scratch using only
+the 14k-sentence training corpus. Out-of-vocabulary words are mapped to
+a single \texttt{<UNK>} embedding, which severely limits generalisation
+to rare or unseen proper nouns --- precisely the population that NER
+must handle well. Even with a structured CRF decoder enforcing label
+consistency, the model achieves only $0.7011$ F1.
+
+DistilBERT's contextual sub-word embeddings address both limitations
+simultaneously. WordPiece tokenisation eliminates the closed-vocabulary
+problem entirely: any character sequence is decomposable into known
+sub-units, allowing the model to construct meaningful representations
+for \textit{Schmidt}, \textit{Kyiv}, or \textit{Chrysler} without ever
+having seen those tokens during pre-training. Self-attention provides
+global context for every position, so the same surface form can receive
+different representations depending on its context (e.g.\
+\textit{Washington} as a \textsc{PER} versus a \textsc{LOC}). These two
+properties combined explain the almost 20-point F1 gap between the two
+models.
+
+The principal trade-off is computational: DistilBERT requires roughly an
+order of magnitude more memory and compute than the BiLSTM-CRF for both
+training and inference, even in its distilled form. Where the latency
+or memory budget is tight, BiLSTM-CRF remains a reasonable default;
+where accuracy is paramount, contextual representations are clearly
+superior.

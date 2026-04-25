@@ -1,0 +1,172 @@
+% ─────────────────────────────────────────────────────────────────
+% CENG 467 Midterm – Question 3: Text Summarization
+% Student ID: 310201050
+% ─────────────────────────────────────────────────────────────────
+
+\section{Question 3: Text Summarization}
+
+\subsection{Dataset}
+
+The CNN/DailyMail v3.0.0 corpus \cite{see2017get} is a large-scale
+news-summarisation benchmark consisting of articles from CNN and the
+Daily Mail paired with multi-sentence editor-written highlights. The
+full corpus contains $\sim$287k training, 13k validation, and 11k test
+articles. For this study, the first $200$ examples of the test split
+are used (selected deterministically with seed 3102). The mean article
+length in the subset is $555$ words; the mean reference summary length
+is $34$ words across roughly 3 sentences. These characteristics motivate
+setting LexRank's sentence budget to 3.
+
+\subsection{Approaches}
+
+\subsubsection{LexRank (Extractive, Graph-Based)}
+
+LexRank \cite{erkan2004lexrank} represents each sentence in an article as
+a node in an undirected graph, with edge weights equal to TF-IDF cosine
+similarity between sentence pairs. A PageRank-style stationary
+distribution is then computed, and the $k$ highest-ranking sentences are
+returned verbatim as the summary. Because LexRank operates by selecting
+existing sentences, it cannot introduce unfaithful content (every output
+token comes from the source document), but it also cannot rephrase,
+compress, or fuse information across sentences.
+
+We use the implementation provided by the \texttt{sumy} library with the
+English Snowball stemmer and standard English stopwords. Three sentences
+are extracted per article, matching the average sentence count of the
+gold-standard highlights.
+
+\subsubsection{DistilBART (Abstractive, Encoder–Decoder Transformer)}
+
+We use \texttt{sshleifer/distilbart-cnn-12-6}, a distilled BART
+\cite{lewis2020bart} checkpoint with 12 encoder layers and 6 decoder
+layers that has been pre-fine-tuned on CNN/DailyMail. The choice of
+distilled weights is dictated by the M2 8\,GB memory budget. Generation
+hyperparameters are summarised in Table~\ref{tab:bart_gen}.
+
+\begin{table}[h]
+\centering
+\caption{DistilBART Generation Configuration}
+\label{tab:bart_gen}
+\begin{tabular}{ll}
+\toprule
+Parameter & Value \\
+\midrule
+Maximum input length        & 1024 sub-tokens (truncation) \\
+Minimum / maximum output len & 30 / 130 sub-tokens \\
+Decoding strategy           & Beam search, $B = 4$ \\
+Length penalty              & 2.0 \\
+No-repeat $n$-gram size     & 3 \\
+Early stopping              & enabled \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Evaluation Metrics}
+
+Summaries are evaluated against the gold highlights using a multi-faceted
+suite that captures complementary aspects of quality:
+
+\begin{itemize}
+  \item \textbf{ROUGE-1, ROUGE-2, ROUGE-L} \cite{lin2004rouge}: $F_1$ of
+        unigram, bigram, and longest-common-subsequence overlap.
+        Standard for summarisation but rewards lexical overlap rather
+        than meaning.
+  \item \textbf{BLEU} \cite{papineni2002bleu}: $n$-gram precision with
+        brevity penalty (smoothing method 4). Borrowed from machine
+        translation; tends to penalise abstractive paraphrasing.
+  \item \textbf{METEOR} \cite{banerjee2005meteor}: incorporates stemming
+        and synonym matching, partially correcting for ROUGE/BLEU's
+        surface-level rigidity.
+  \item \textbf{BERTScore F1} \cite{zhang2020bertscore}: token-level
+        cosine similarity in contextual embedding space
+        (\texttt{distilbert-base-uncased} backbone for memory
+        efficiency). Captures semantic equivalence even under heavy
+        paraphrasing.
+\end{itemize}
+
+\subsection{Results}
+
+\begin{table}[h]
+\centering
+\caption{Summarisation Results on CNN/DailyMail (n=200 test articles)}
+\label{tab:q3_results}
+\begin{tabular}{lcc}
+\toprule
+Metric              & LexRank (extractive) & DistilBART (abstractive) \\
+\midrule
+ROUGE-1             & 0.2808 & \textbf{0.3538} \\
+ROUGE-2             & 0.0939 & \textbf{0.1498} \\
+ROUGE-L             & 0.1883 & \textbf{0.2580} \\
+BLEU                & 0.0553 & \textbf{0.1043} \\
+METEOR              & 0.3075 & \textbf{0.3370} \\
+BERTScore F1        & 0.7776 & \textbf{0.8030} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+DistilBART outperforms LexRank on every single metric. The gap is
+largest for $n$-gram-overlap metrics that reward lexical fidelity to the
+reference (ROUGE-2 nearly $1.6\times$ higher; BLEU nearly $2\times$
+higher). The gap on METEOR and BERTScore is narrower because both
+metrics partially reward LexRank's verbatim copying of source-document
+phrasings.
+
+\subsection{Qualitative Analysis}
+
+Three example articles are inspected in full in
+\texttt{q3\_results.json} (indices 0, 50, 100). Three differences
+between the extractive and abstractive outputs are consistently observed.
+
+\paragraph{Fluency.}
+LexRank summaries are by construction grammatical sentences from the
+original article, so they are individually fluent. However, when the
+three top-ranked sentences come from non-adjacent positions in the
+source, the resulting concatenation reads as disjointed narrative ---
+the test-set example at index 50 illustrates this: LexRank concatenates
+three legal-discussion sentences about defamation that lose any
+connection to the article's main narrative about the Rolling Stone
+retraction. DistilBART, in contrast, produces a coherent paragraph
+because the decoder generates it autoregressively under a smooth
+language-model prior.
+
+\paragraph{Information Coverage.}
+DistilBART recovers the article's most newsworthy facts (\textit{``A new
+trial was ordered in 2014 after firearms experts testified''} in example
+100) that LexRank misses entirely, because such facts are spread across
+multiple low-salience sentences in the source. LexRank's centrality-based
+selection rewards repeated themes rather than rare informative content.
+
+\paragraph{Factual Faithfulness.}
+This is where the trade-off reverses. LexRank's outputs are extractively
+faithful by definition. DistilBART, in contrast, occasionally exhibits
+\emph{hallucination}: in example 50, the abstractive output attributes
+the article to a named columnist (``Dean Obeidallah'') whose name does
+not appear in the source preview. Such hallucinations are well
+documented for abstractive encoder–decoder models trained with
+maximum-likelihood objectives, and they remain a key open problem for
+the field.
+
+\subsection{Discussion}
+
+ROUGE and BLEU favour systems that lexically overlap with the reference,
+so LexRank --- which copies source sentences directly --- typically
+scores respectably on these metrics despite generating less coherent
+prose. However, the present results show that even on these surface
+metrics, abstractive DistilBART wins decisively, because its
+fine-tuning on CNN/DailyMail-style highlights teaches it to produce
+output that closely matches the lexical distribution of human-written
+summaries. DistilBART's lead widens further on METEOR and BERTScore,
+both of which reward semantic alignment beyond surface form.
+
+In terms of cost, LexRank requires only TF-IDF computation and a small
+eigenvector calculation, runs entirely on CPU, and produces summaries
+in milliseconds. DistilBART requires a fine-tuned $\sim$300\,MB model
+and beam-search decoding that takes seconds per article. On readability
+and coverage, DistilBART is clearly preferable. On faithfulness,
+LexRank is strictly safer.
+
+In production settings, the choice depends heavily on downstream
+tolerance for hallucination: legal, medical, and financial
+summarisation favour extractive (or strongly grounded abstractive)
+approaches, whereas consumer-facing news digests can usually tolerate
+the abstractive trade-off in exchange for fluency.

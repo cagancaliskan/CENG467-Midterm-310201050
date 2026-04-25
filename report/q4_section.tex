@@ -1,0 +1,220 @@
+% ─────────────────────────────────────────────────────────────────
+% CENG 467 Midterm – Question 4: Machine Translation
+% Student ID: 310201050
+% ─────────────────────────────────────────────────────────────────
+
+\section{Question 4: Machine Translation}
+
+\subsection{Dataset and Preprocessing}
+
+The Multi30k corpus \cite{elliott2016multi30k} is used for
+German-to-English translation. Multi30k is built on top of the
+Flickr30k image-caption dataset, with each English caption
+professionally translated into German. It contains 29{,}000 training,
+1{,}014 validation, and 1{,}000 test parallel sentence pairs. The
+relatively short, syntactically-controlled captions make the corpus a
+popular benchmark for neural-MT experiments on modest hardware.
+
+Two distinct preprocessing pipelines are used:
+
+\begin{itemize}
+  \item \textbf{Seq2Seq pipeline:} text is lowercased, punctuation
+        tokens are separated from adjacent words via regular
+        expressions, and resulting tokens are mapped to integer ids
+        using vocabularies built from the training data. Vocabulary
+        size is capped at 8{,}000 per language with a minimum-frequency
+        threshold of 2; rare tokens are mapped to \texttt{<unk>}. After
+        capping, the actual learnt vocabularies contain
+        $7{,}835$ German source tokens and $5{,}895$ English target
+        tokens. Sequences are padded to a maximum of 50 tokens, and
+        decoder targets are wrapped in \texttt{<sos>}/\texttt{<eos>}
+        markers.
+  \item \textbf{MarianMT pipeline:} the pretrained
+        \texttt{Helsinki-NLP/opus-mt-de-en} tokenizer
+        (SentencePiece-based) is applied directly, requiring no
+        additional preprocessing.
+\end{itemize}
+
+\subsection{Models}
+
+\subsubsection{Model A — Seq2Seq with Bahdanau Attention (Trained from Scratch)}
+
+A bidirectional LSTM encoder maps source tokens to a context tensor; the
+decoder is a unidirectional LSTM with Bahdanau attention
+\cite{bahdanau2015neural}, where the attention layer computes a soft
+alignment $\alpha_t$ over encoder states at every decoding step:
+
+\[
+\alpha_t = \mathrm{softmax}\bigl(v^{\top}\tanh(W[h_t^{\text{dec}};h_{1:T}^{\text{enc}}])\bigr),
+\quad
+c_t = \sum_{i=1}^{T}\alpha_{t,i}\, h_i^{\text{enc}}.
+\]
+
+The output projection conditions on the LSTM state, the attention
+context, and the decoder embedding, following the standard formulation.
+Hyperparameters are summarised in Table~\ref{tab:s2s_hp}; the trained
+model has $12.12$ million parameters.
+
+\begin{table}[h]
+\centering
+\caption{Seq2Seq+Attention Hyperparameters}
+\label{tab:s2s_hp}
+\begin{tabular}{ll}
+\toprule
+Hyperparameter      & Value \\
+\midrule
+Embedding dimension & 256 \\
+Hidden dimension    & 256 (encoder bidirectional → 512 effective) \\
+Dropout             & 0.30 \\
+Batch size          & 32 \\
+Epochs              & 8 \\
+Optimiser / LR      & Adam / $10^{-3}$, StepLR (step 3, $\gamma=0.5$) \\
+Teacher-forcing     & 0.50 \\
+Gradient clipping   & 1.0 \\
+Decoding            & Greedy \\
+Total parameters    & 12.12 M \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Model B — MarianMT (Pretrained Transformer)}
+
+The \texttt{Helsinki-NLP/opus-mt-de-en} checkpoint
+\cite{tiedemann2020opusmt} is a 6-layer encoder–decoder Transformer
+trained on the OPUS corpora across many language pairs. The model is
+used out-of-the-box for inference (no additional fine-tuning); generation
+uses beam search with $B=4$ and a maximum output length of 128
+sub-tokens.
+
+\subsection{Evaluation Metrics}
+
+We evaluate translations against the gold English captions using a
+four-metric suite chosen to capture complementary aspects of quality:
+
+\begin{itemize}
+  \item \textbf{BLEU} \cite{papineni2002bleu} via \texttt{sacrebleu}.
+        Standard $n$-gram precision with brevity penalty; reproducible
+        exactly across toolchains.
+  \item \textbf{METEOR} \cite{banerjee2005meteor}. Aligns hypotheses to
+        references using stemming and WordNet synonyms.
+  \item \textbf{ChrF} \cite{popovic2015chrf} via \texttt{sacrebleu}.
+        Character $n$-gram F-score; particularly informative for
+        morphologically rich languages because it credits stem matches
+        even when affixes differ.
+  \item \textbf{BERTScore F1} \cite{zhang2020bertscore} computed with a
+        \texttt{distilbert-base-uncased} backbone (for memory
+        efficiency). Captures semantic equivalence in contextual
+        embedding space.
+\end{itemize}
+
+\subsection{Results}
+
+\begin{table}[h]
+\centering
+\caption{Multi30k Test-Set Translation Results (de→en, n=1000)}
+\label{tab:q4_results}
+\begin{tabular}{lcc}
+\toprule
+Metric            & Seq2Seq+Attention & MarianMT \\
+\midrule
+BLEU              & 27.69 & \textbf{39.66} \\
+ChrF              & 49.34 & \textbf{60.60} \\
+METEOR            & 0.6267 & \textbf{0.7394} \\
+BERTScore F1      & 0.8882 & \textbf{0.9333} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+MarianMT outperforms the from-scratch Seq2Seq across every metric. The
+margin is particularly pronounced on BLEU ($+11.97$ points) and ChrF
+($+11.26$ points), which reward exact $n$-gram matches and are
+therefore especially sensitive to fluency and lexical accuracy. The
+narrower margin on BERTScore (still $+0.045$) indicates that Seq2Seq
+captures most of the semantic content but expresses it less fluently.
+
+\subsection{Qualitative Examples}
+
+\begin{table}[h]
+\centering
+\caption{Sample Outputs (test indices 0, 100, 500)}
+\label{tab:q4_qual}
+\small
+\begin{tabular}{p{0.16\textwidth}p{0.74\textwidth}}
+\toprule
+\multicolumn{2}{l}{\textbf{Example 1 (test index 0)}} \\
+\midrule
+Source (de)  & Ein Mann mit einem orangefarbenen Hut, der etwas anstarrt. \\
+Reference    & A man in an orange hat starring at something. \\
+Seq2Seq+Attn & a man in an orange hat is something something . \\
+MarianMT     & A man with an orange hat staring at something. \\
+\midrule
+\multicolumn{2}{l}{\textbf{Example 2 (test index 100)}} \\
+\midrule
+Source (de)  & Eine glückliche Frau bereitet in einem Coffee-Shop eine Erfrischung zu. \\
+Reference    & A happy woman is preparing a refreshment at a coffee shop. \\
+Seq2Seq+Attn & a happy is preparing a a a a a a a a . \\
+MarianMT     & A happy woman prepares a refreshment in a coffee shop. \\
+\midrule
+\multicolumn{2}{l}{\textbf{Example 3 (test index 500)}} \\
+\midrule
+Source (de)  & Ein Tisch voller gerahmter Bilder, ein Freiluftmarkt. \\
+Reference    & A table full of pictures in frames, at an outdoor market. \\
+Seq2Seq+Attn & a table full of pictures pictures . \\
+MarianMT     & A table full of framed pictures, an outdoor market. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Across these three samples, three patterns are consistently observed.
+
+\paragraph{Repetition collapse in Seq2Seq.}
+Example 100 reveals a classic failure mode of greedy decoding in small
+recurrent models: the model gets stuck on the article \textit{a} and
+emits it eight times in succession. This is the well-documented
+``repetition trap'' that motivated the development of coverage
+mechanisms and beam search with length-penalty constraints. The same
+phenomenon appears in Example 1 (\textit{``something something''}) and
+Example 3 (\textit{``pictures pictures''}).
+
+\paragraph{Vocabulary clipping artefacts.}
+Example 100 also shows the Seq2Seq model dropping the noun
+\textit{Frau} (woman): the German source word likely received a
+sufficient embedding, but the target-side decoder failed to reproduce
+\textit{woman} in this context. MarianMT's SentencePiece tokenizer and
+larger pre-training corpus produce \textit{woman} fluently.
+
+\paragraph{Surface fluency.}
+Even when the Seq2Seq output is semantically close, it can produce
+slightly ungrammatical English (article omission, lowercased proper
+sentence starts). MarianMT outputs are uniformly fluent because the
+decoder language model has been trained on orders of magnitude more
+data.
+
+\subsection{Discussion}
+
+\paragraph{What each metric reflects.}
+BLEU and ChrF reward surface-level overlap, with BLEU penalising
+paraphrases harshly and ChrF being more forgiving thanks to
+character-level matching --- particularly relevant for German
+morphology. METEOR partially recovers paraphrases through stemming and
+synonymy, and tends to track human judgement more closely than BLEU
+alone. BERTScore is the most permissive: it credits semantic
+equivalence even when surface forms differ substantially, which is why
+the Seq2Seq model retains a relatively high BERTScore ($0.8882$)
+despite its low BLEU ($27.69$).
+
+\paragraph{Architectural trade-offs.}
+The Seq2Seq+attention model has $12.12$M parameters, trains in roughly
+ten minutes on M2 hardware, and runs inference in seconds. Its weakness
+is data efficiency: with only 29k training pairs and randomly
+initialised embeddings, it cannot match the quality of a model that has
+seen orders of magnitude more bilingual data. MarianMT inherits roughly
+$78$M parameters of pretrained knowledge, handles open-vocabulary
+inputs through SentencePiece, and uses self-attention rather than
+recurrence, all of which make it both more accurate and more robust.
+
+The trade-off is in resource use and architectural transparency: a
+hand-written Seq2Seq+attention model is a valuable pedagogical artefact
+precisely because every component is visible and modifiable, whereas
+the pretrained Marian checkpoint is a black box that one consumes
+rather than understands.

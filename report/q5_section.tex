@@ -1,0 +1,196 @@
+% ─────────────────────────────────────────────────────────────────
+% CENG 467 Midterm – Question 5: Language Modeling
+% Student ID: 310201050
+% ─────────────────────────────────────────────────────────────────
+
+\section{Question 5: Language Modeling}
+
+\subsection{Dataset}
+
+The WikiText-2 corpus \cite{merity2017wikitext} is selected for this
+investigation. WikiText-2 contains approximately 2 million tokens drawn
+from a curated set of verified-good Wikipedia articles. The corpus is
+preprocessed into fixed train ($2{,}051{,}910$ tokens), validation
+($213{,}886$ tokens) and test ($241{,}211$ tokens) splits, and
+words occurring fewer than three times in the training data have been
+replaced with the \texttt{<unk>} symbol. These properties make
+WikiText-2 the canonical small benchmark for language modelling
+experiments and a natural choice for an Apple~M2 8\,GB development
+setup.
+
+The vocabulary is constructed directly from the training tokens
+($33{,}277$ unique types) and shared by both models, ensuring that
+perplexity numbers are directly comparable.
+
+\subsection{Models}
+
+\subsubsection{Model 1 — Trigram with Add-k Smoothing}
+
+The first model is a classical trigram language model with add-$k$
+smoothing. Letting $c(\cdot)$ denote training-corpus counts, the
+probability of token $w_3$ given two-word context $(w_1, w_2)$ is
+
+\[
+P_{\text{add-}k}(w_3 \mid w_1, w_2) =
+\frac{c(w_1, w_2, w_3) + k}{c(w_1, w_2) + k\,V},
+\]
+
+where $V$ is the vocabulary size and $k = 0.01$. This small $k$ assigns
+non-zero probability to unseen trigrams while disturbing the
+distribution over observed contexts only slightly. Compared with
+classical add-1 (Laplace) smoothing it preserves more of the empirical
+signal in high-count contexts.
+
+The model has no learned parameters in the usual sense; estimation is a
+single pass over the training corpus. Generation is performed by
+sampling from the smoothed distribution at each step.
+
+\subsubsection{Model 2 — 2-Layer LSTM Language Model}
+
+The second model is a two-layer LSTM \cite{hochreiter1997lstm} trained
+end-to-end with cross-entropy loss using truncated back-propagation
+through time (BPTT). The trained model has $15.93$ million parameters.
+
+\begin{table}[h]
+\centering
+\caption{LSTM Language Model Hyperparameters}
+\label{tab:lstm_lm_hp}
+\begin{tabular}{ll}
+\toprule
+Hyperparameter   & Value \\
+\midrule
+Embedding dimension      & 192 \\
+Hidden dimension         & 256 \\
+Number of LSTM layers    & 2 \\
+Dropout                  & 0.45 \\
+BPTT context length      & 35 tokens \\
+Batch size               & 20 (BPTT layout) \\
+Epochs                   & 6 \\
+Optimiser / LR           & Adam / $10^{-3}$ \\
+LR schedule              & StepLR (step 2, $\gamma=0.5$) \\
+Gradient clipping        & 0.25 \\
+Total parameters         & 15.93 M \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The hidden state is detached at every BPTT window so gradients do not
+back-propagate across windows, which both stabilises training and keeps
+memory consumption bounded. At inference, a fresh zero hidden state
+followed by the prompt tokens primes the model before sampling begins.
+
+\subsection{Evaluation: Perplexity}
+
+Perplexity is the exponentiated per-token cross-entropy:
+
+\[
+\mathrm{PPL}(w_1,\dots,w_N) = \exp\Bigl(-\tfrac{1}{N}\sum_{i=1}^{N} \log P(w_i \mid w_{<i})\Bigr).
+\]
+
+It is the standard intrinsic measure of language-model quality; lower
+values indicate that the model assigns higher probability mass to
+held-out text.
+
+\begin{table}[h]
+\centering
+\caption{WikiText-2 Perplexity (lower is better; seed 3102)}
+\label{tab:q5_results}
+\begin{tabular}{lcc}
+\toprule
+Model                            & Validation PPL & Test PPL \\
+\midrule
+Trigram (add-$k$, $k = 0.01$)    & 3868.40 & 3587.97 \\
+2-layer LSTM                     & \textbf{389.69} & \textbf{353.41} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The LSTM achieves perplexity approximately \emph{ten times lower} than
+the trigram baseline ($353.41$ vs.\ $3587.97$ on test). This dramatic
+gap quantifies the benefit of distributed representations and longer
+effective context for next-token prediction.
+
+\subsection{Text Generation Samples}
+
+Both models are seeded with three identical short prompts and generate
+25 follow-up tokens by sampling from their respective distributions
+(temperature $\tau = 0.9$ for the LSTM; raw smoothed distribution for the
+trigram).
+
+\begin{table}[h]
+\centering
+\caption{Generated Continuations (excerpts)}
+\label{tab:q5_gen}
+\small
+\begin{tabular}{p{0.13\textwidth}p{0.78\textwidth}}
+\toprule
+Prompt    & ``the city of'' \\
+Trigram   & \textit{... Zagreb. However, German mycologist Rolf Singer listed three subspecies, although it was then tied with Tower of Terror, with Julio Jones} \\
+LSTM      & \textit{... achieving to October the kings before the soul. There are full, was \texttt{<unk>}, almost serving as the Bruins as a short school} \\
+\midrule
+Prompt    & ``in the year'' \\
+Trigram   & \textit{... . Twenty @-@ four @-@ issue story arc to be in a Pepsi television advertisement in the north of the young characters into one of} \\
+LSTM      & \textit{... – two season and the 17th of arguing and fought on Scotland and ₹ 85 (1 @.@) mi; the storm – 16} \\
+\midrule
+Prompt    & ``she said that'' \\
+Trigram   & \textit{... the problem in many cases from several teams that were arrested and killed four young black girls and football manager. Lawton and Sewell's} \\
+LSTM      & \textit{... it is `` that related is while deal as his political titles '', by the first name on six side, being peaking by} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Trigram outputs.}
+Locally fluent two- and three-word fragments appear because every chosen
+word has been observed immediately following the preceding bigram.
+However, coherence collapses beyond the trigram window: the topic
+drifts unpredictably across very different domains within a single
+sample (e.g.\ from \textit{German mycologist} to \textit{Tower of
+Terror} to \textit{Julio Jones}), and named entities are introduced
+without context. Topical coherence is bounded by the length of the
+$n$-gram context and breaks immediately at that boundary.
+
+\paragraph{LSTM outputs.}
+The LSTM produces longer fluent spans with consistent grammatical
+structure (\textit{``almost serving as the Bruins as a short school''}
+preserves clausal structure even where content is incoherent). Failure
+modes are different from the trigram model's: rather than topic drift,
+the LSTM tends to combine plausible noun phrases in semantically
+implausible ways, and occasionally produces tokens such as \texttt{₹},
+\texttt{@-@}, and \texttt{<unk>} that are artefacts of the WikiText-2
+preprocessing rather than genuine language. These behaviours are
+characteristic of LM-decoded text trained with maximum-likelihood
+objectives on a small corpus.
+
+\subsection{Discussion}
+
+\paragraph{Why the LSTM dominates on perplexity.}
+The trigram model estimates one parameter per observed $(w_1, w_2,
+w_3)$ triple, which suffers from severe data sparsity: even on
+WikiText-2's $\sim$2M training tokens, the vast majority of
+theoretically possible trigrams remain unobserved, so add-$k$ smoothing
+must allocate substantial probability mass to all of them uniformly.
+The LSTM, in contrast, learns a continuous distributed representation
+in which similar contexts produce similar predictions, generalising
+automatically across rare or unseen surface patterns. The
+$10\times$ perplexity gap quantifies this advantage.
+
+\paragraph{Effective context.}
+Although the LSTM is in principle able to condition on arbitrarily long
+histories, in practice the information that survives many recurrent
+updates degrades. Empirical studies have shown effective context
+lengths of a few hundred tokens for deep LSTMs; modern Transformers use
+direct attention to circumvent this limitation, which is the main
+reason they have largely supplanted recurrent architectures for
+language modelling. The trigram model's effective context is fixed at
+two tokens, which is why its perplexity remains in the four-digit range
+even after smoothing.
+
+\paragraph{Trade-offs.}
+The trigram model trains in seconds, requires no GPU, and is perfectly
+transparent --- every probability is a counted fraction. The LSTM
+requires multiple training epochs and approximately $16$M parameters,
+but produces dramatically lower perplexity and generates more coherent
+samples. For applications that need quick statistical baselines (corpus
+statistics, code-switch detection, forced alignment) a smoothed
+$n$-gram remains a perfectly serviceable choice; for any application
+that requires generation quality, the neural model is preferable.

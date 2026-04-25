@@ -1,0 +1,214 @@
+% ─────────────────────────────────────────────────────────────────
+% CENG 467 Midterm – Question 1: Text Classification
+% Student ID: 310201050
+% ─────────────────────────────────────────────────────────────────
+
+\section{Question 1: Representation Learning in Text Classification}
+
+\subsection{Dataset}
+
+The IMDb Large Movie Review Dataset \cite{maas2011imdb} consists of 50{,}000
+binary-labelled movie reviews (25{,}000 train / 25{,}000 test), evenly split
+between positive and negative sentiment classes. Because fine-tuning a
+Transformer on the full training corpus exceeds the available memory budget
+of the Apple~M2 (8\,GB RAM), a reproducible subset was drawn using seed 3102
+derived from the author's student identifier: $6{,}000$ training samples,
+$1{,}000$ validation samples, and $1{,}000$ held-out test samples. The test
+set was used \emph{exactly once} for final evaluation.
+
+\subsection{Preprocessing and Tokenisation Strategies}
+
+A shared normalisation pipeline is applied to all texts before
+model-specific tokenisation. HTML tags are stripped with a regular
+expression, the text is lower-cased, all non-alphabetic characters are
+removed, and consecutive whitespace is collapsed to a single space. Three
+tokenisation strategies are then applied, each suited to the
+representational assumptions of a different model.
+
+\paragraph{Strategy A — Whitespace Split with Stopword Removal.}
+Tokens are produced by splitting on whitespace after normalisation,
+followed by removal of English stopwords (NLTK list, 179 tokens). This
+yields compact, content-bearing token sequences and is used by the TF-IDF
+representation. Removing stopwords reduces feature noise but discards
+negation words such as \textit{not}; the TF-IDF bigram range partially
+compensates for this loss.
+
+\paragraph{Strategy B — NLTK \texttt{word\_tokenize}.}
+NLTK's rule-based tokeniser is applied after normalisation \emph{without}
+stopword removal, preserving punctuation-adjacent morphology and
+contractions that carry affective weight (e.g.\ \textit{wasn't},
+\textit{couldn't}). This strategy is used by BiLSTM to retain richer
+sequential cues.
+
+\paragraph{Strategy C — WordPiece subword tokenisation.}
+DistilBERT employs its own WordPiece subword tokeniser via
+\texttt{DistilBertTokenizerFast}, which decomposes out-of-vocabulary words
+into known sub-units, making it the most robust of the three approaches.
+
+\subsection{Models}
+
+\subsubsection{TF-IDF + Logistic Regression}
+
+A sparse TF-IDF matrix is constructed from Strategy-A tokens with $30{,}000$
+maximum features, unigram and bigram ranges, and sublinear TF scaling
+($\text{tf} \leftarrow 1+\log\text{tf}$). A Logistic Regression classifier
+with $C=0.7$ is trained via L-BFGS. This constitutes the \emph{sparse}
+representation baseline.
+
+\subsubsection{BiLSTM}
+
+A two-layer bidirectional LSTM \cite{hochreiter1997lstm} is implemented with
+the configuration shown in Table~\ref{tab:bilstm_hp}. The final hidden
+states from the last forward and backward layers are concatenated and
+passed through a linear classification head. This constitutes the
+\emph{dense sequential} representation.
+
+\begin{table}[h]
+\centering
+\caption{BiLSTM Hyperparameters}
+\label{tab:bilstm_hp}
+\begin{tabular}{ll}
+\toprule
+Hyperparameter & Value \\
+\midrule
+Vocabulary size     & 20{,}000 \\
+Embedding dimension & 128 \\
+Hidden dimension    & 128 \\
+Number of layers    & 2 (bidirectional) \\
+Dropout             & 0.35 \\
+Maximum sequence length & 256 \\
+Batch size          & 32 \\
+Epochs              & 5 \\
+Optimiser / LR      & Adam / $10^{-3}$ \\
+Gradient clipping   & 1.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{DistilBERT}
+
+DistilBERT-base-uncased \cite{sanh2019distilbert} is fine-tuned for sequence
+classification (Table~\ref{tab:bert_hp}). The full self-attention stack
+provides \emph{contextual} representations where each token's embedding is
+conditioned on the entire input.
+
+\begin{table}[h]
+\centering
+\caption{DistilBERT Fine-Tuning Hyperparameters}
+\label{tab:bert_hp}
+\begin{tabular}{ll}
+\toprule
+Hyperparameter & Value \\
+\midrule
+Pretrained model        & \texttt{distilbert-base-uncased} \\
+Maximum sequence length & 256 \\
+Batch size              & 16 \\
+Epochs                  & 3 \\
+Learning rate           & $2 \times 10^{-5}$ \\
+Weight decay            & 0.01 \\
+Warmup ratio            & 10\% \\
+Gradient clipping       & 1.0 \\
+Scheduler               & Linear with warmup \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Evaluation Results}
+
+All models are evaluated on the same held-out test split ($n=1{,}000$) using
+Accuracy and Macro-F1. Given the balanced class distribution, both metrics
+yield consistent estimates of generalisation
+(Table~\ref{tab:q1_results}).
+
+\begin{table}[h]
+\centering
+\caption{Test-Set Performance on IMDb (seed 3102)}
+\label{tab:q1_results}
+\begin{tabular}{lcc}
+\toprule
+Model & Accuracy & Macro-F1 \\
+\midrule
+TF-IDF + Logistic Regression & 0.8550 & 0.8548 \\
+BiLSTM                       & 0.7490 & 0.7488 \\
+DistilBERT                   & \textbf{0.8970} & \textbf{0.8970} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The pattern is striking: the sparse TF-IDF baseline (85.5\%) substantially
+outperforms the dense BiLSTM (74.9\%), while the contextual DistilBERT
+(89.7\%) outperforms both. The strong showing of TF-IDF reflects the
+fact that IMDb reviews are long and lexically rich in sentiment-bearing
+unigrams, exactly the regime in which sparse linear models excel. The
+BiLSTM, despite its sequential modelling capacity, is data-hungry: with
+only 6{,}000 randomly initialised embeddings, it cannot generalise as
+well as a well-regularised linear model on the same data.
+
+\subsection{Misclassification Analysis}
+
+Five misclassified examples produced by DistilBERT were inspected in
+detail; the full text of each is preserved in
+\texttt{q1\_results.json}. Three of the five errors share a single
+recurring pattern.
+
+\paragraph{Pattern 1 — Ironic praise of niche or ``cult'' material.}
+Reviews [8], [14], and [31] are all positive reviews predicted as
+negative. They share a rhetorical strategy in which the reviewer
+enthusiastically endorses a film while using ironic or self-deprecating
+descriptors (\textit{``Citizen Cane this film is not''}, \textit{``a
+mess''}, \textit{``bad hair''}, \textit{``about as good as a bad
+dino-flick can get''}). DistilBERT picks up on the surface-level negative
+adjectives and misclassifies the overall stance, which is unmistakably
+positive on a careful reading.
+
+\paragraph{Pattern 2 — Mixed sentiment with a reversed conclusion.}
+Review [50] is a negative review predicted as positive: the writer opens
+by criticising the film as boring and predictable, then spends most of
+the body praising specific actors and on-screen chemistry, before
+returning to the negative verdict. DistilBERT's 256-token window captures
+predominantly the central praise, missing the bracketing critical frame.
+
+\paragraph{Pattern 3 — Affective negation with mixed lexical signal.}
+Review [1] explicitly disclaims itself (\textit{``this film will never
+win an oscar''}, \textit{``Citizen Cane this film is not''}) but
+expresses genuine enjoyment (\textit{``I had fun''}, \textit{``I liked
+the cheese''}). The lexical signal is genuinely conflicted, and the
+model resolves it incorrectly.
+
+These three patterns —- irony, mixed-sentiment with reversal, and
+affective negation —- are all variants of a single underlying problem:
+\emph{the model is reading lexical polarity rather than rhetorical
+stance}. Such errors are well-documented for fine-tuned Transformers and
+are not eliminable without explicit modelling of discourse structure or
+substantially larger training data.
+
+\subsection{Discussion: Representation Types}
+
+\paragraph{TF-IDF (Sparse).} Despite its simplicity, TF-IDF with logistic
+regression delivered $85.5\%$ accuracy --- well within ten points of
+the DistilBERT result --- because IMDb reviews are long and
+sentiment-rich at the unigram level. The model is computationally cheap,
+fully interpretable through feature weights, and requires no GPU.
+However, it is completely insensitive to word order and context; surface
+forms such as \textit{good} and \textit{not good} receive independent
+representations.
+
+\paragraph{BiLSTM (Dense Sequential).} Surprisingly, the BiLSTM
+\emph{underperforms} TF-IDF on this subset by more than 10 points. This
+counterintuitive ordering reflects two factors. First, the BiLSTM is
+initialised with random embeddings, so it must learn its representations
+from only 6{,}000 examples --- insufficient to outperform a
+well-regularised sparse linear model. Second, the long-tail vocabulary
+of IMDb reviews is partially clipped to 20{,}000 types, and rare but
+sentiment-bearing words are mapped to \texttt{<UNK>}. With pre-trained
+GloVe or word2vec initialisation the result would likely improve, but
+even then the gap to DistilBERT would persist.
+
+\paragraph{DistilBERT (Contextual).} Pre-trained self-attention provides
+rich, context-dependent representations that markedly outperform both
+sparse and recurrent baselines. Each token is encoded with global
+context at no additional training cost beyond fine-tuning. The
+trade-off is computational: DistilBERT requires substantially more
+memory and training time than the other two approaches. On the M2 the
+3-epoch fine-tune took roughly $45$\,minutes, compared with seconds for
+the sparse model.
