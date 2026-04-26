@@ -224,7 +224,7 @@ for ep in range(EPOCHS_LSTM):
         loss = criterion(lstm_clf(xb), yb)
         # backpropagate errors
                 # backpropagate errors and step the optimizer
-loss.backward()
+        loss.backward()
         nn.utils.clip_grad_norm_(lstm_clf.parameters(), 1.0)
         opt_lstm.step()
         total_loss += loss.item()
@@ -291,7 +291,7 @@ for ep in range(BERT_EPOCHS):
         opt_bert.zero_grad()
         loss = bert(**batch, labels=labels).loss
                 # backpropagate errors and step the optimizer
-loss.backward()
+        loss.backward()
         nn.utils.clip_grad_norm_(bert.parameters(), 1.0)
         opt_bert.step(); scheduler.step()
         total_loss += loss.item()

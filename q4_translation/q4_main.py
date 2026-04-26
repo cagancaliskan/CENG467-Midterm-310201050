@@ -241,7 +241,7 @@ for ep in range(EPOCHS):
         loss = criterion(logits[:, 1:].reshape(-1, logits.size(-1)),
                          tgt   [:, 1:].reshape(-1))
                 # calculate gradients and update weights
-loss.backward()
+        loss.backward()
         nn.utils.clip_grad_norm_(seq2seq.parameters(), 1.0)
         opt.step()
         tr_loss += loss.item()

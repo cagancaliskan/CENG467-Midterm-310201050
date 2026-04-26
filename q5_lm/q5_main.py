@@ -209,7 +209,7 @@ for ep in range(EPOCHS):
         logits, hid = model_lstm(x, hid)
         loss = criterion(logits.reshape(-1, V), y.reshape(-1))
                     # propagate loss through time (BPTT)
-loss.backward()
+        loss.backward()
         nn.utils.clip_grad_norm_(model_lstm.parameters(), GRAD_CLIP)
         opt_lstm.step()
         total_loss += loss.item() * y.numel()
