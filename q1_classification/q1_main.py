@@ -196,8 +196,7 @@ class BiLSTMClassifier(nn.Module):
         # Concatenate last forward and backward hidden states
         out = torch.cat([h[-2], h[-1]], dim=1)
         # classify the sequence based on final hidden states
-                # classify the concatenated forward/backward representations
-return self.fc(self.drop(out))
+        return self.fc(self.drop(out))
 
 lstm_clf  = BiLSTMClassifier(len(vocab_words), EMBED_DIM, HIDDEN_DIM, LSTM_LAYERS, DROPOUT_LSTM).to(DEVICE)
 opt_lstm  = torch.optim.Adam(lstm_clf.parameters(), lr=LR_LSTM)

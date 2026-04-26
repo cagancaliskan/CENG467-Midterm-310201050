@@ -89,9 +89,8 @@ def parse_conll_file(path):
         # read line by line to parse the conll format
         for line in f:
             line = line.rstrip("\n")
-            # docstart means a new document is starting, we can ignore it
-                        # docstart means a new document is starting, skip it
-if not line or line.startswith("-DOCSTART-"):
+            # docstart means a new document is starting, skip it
+            if not line or line.startswith("-DOCSTART-"):
                 if toks:
                     sentences.append({"tokens": toks, "ner_tags": to_bio(tags)})
                     toks, tags = [], []
@@ -237,10 +236,10 @@ class BiLSTM_CRF(nn.Module):
     def forward(self, x, mask, tags=None):
         emi = self.emissions(x)
         if tags is not None:
-                        # return the negative log likelihood for training
-return -self.crf(emi, tags, mask=mask, reduction="mean")
-                # during eval, use viterbi decoding to get best path
-return self.crf.decode(emi, mask=mask)
+            # return the negative log likelihood for training
+            return -self.crf(emi, tags, mask=mask, reduction="mean")
+        # during eval, use viterbi decoding to get best path
+        return self.crf.decode(emi, mask=mask)
 
 model_lstm = BiLSTM_CRF(len(VOCAB_WORDS), EMBED_DIM, HIDDEN_DIM, NUM_LABELS, DROPOUT_LSTM).to(DEVICE)
 opt_lstm   = torch.optim.Adam(model_lstm.parameters(), lr=LR_LSTM, weight_decay=1e-5)
